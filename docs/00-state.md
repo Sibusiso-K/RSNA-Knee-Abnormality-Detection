@@ -12,7 +12,7 @@
 ## Where we are right now
 
 **Phase 0 — Access: done.** Data is downloaded and the extractor has run against real reports.
-**Phase 1 — Label extraction: 0.734 macro AUC vs the gold studies**, up from 0.685 at first contact.
+**Phase 1 — Label extraction: 0.757 macro AUC vs the gold studies**, up from 0.685 at first contact.
 
 The rule-based extractor now understands report *structure*, not just sentences: it parses
 templated section headers (`Medial Meniscus:`, `Medial Compartment:`), inherits concept and
@@ -33,17 +33,15 @@ python -m pytest tests/ -q                          # 34 tests
 
 ## The next three actions, in order
 
-1. **Work the new tail using `--disagree`.** Current per-label AUC: Medial OA 0.658, PF OA 0.656,
-   Lateral OA 0.676, Contusion 0.652 are now the weakest. All three OA labels are clustered around
-   0.65-0.68 despite the earlier vocabulary expansion (fissuring/spurring/chondrosis) — worth
-   checking whether OA has the same kind of language-coverage gap that fixed Effusion/Meniscus, or
-   a different problem entirely (severity-threshold ambiguity, most likely, since OA is graded).
+1. **Effusion and Synovitis are now the weakest (0.612, 0.630).** Effusion's precision has been
+   sliding as recall climbed (0.914 recall, 0.667 precision) — worth checking whether the vocabulary
+   expansions are now over-firing rather than under-firing. Synovitis hasn't been chased directly
+   yet in any session.
 2. **Consider whether Fracture and Contusion still share the marrow-edema ambiguity noted in
-   session 4.** Not yet resolved — two conflicting gold examples (one where "insufficiency
-   fracture" wording is gold=1, two where near-identical wording is gold=0) suggest this needs the
-   host's detailed label-criteria post, not more pattern-guessing on 2-3 examples.
+   session 4.** Not yet resolved — needs the host's detailed label-criteria post, not more
+   pattern-guessing on 2-3 examples.
 3. **Then** the open-weights LLM extractor (Phase 1 step 2 in [05-plan.md](05-plan.md)), with this
-   rule extractor — now at 0.734 — as the baseline it has to beat.
+   rule extractor — now at 0.757 — as the baseline it has to beat.
 4. Worth a quick pass: check whether other negation words share the "izlenme" false-friend
    structure in other languages (a wildcarded root that's also a substring of the positive form).
    Found three Turkish instances in one sitting; unclear if it's isolated to Turkish.
@@ -66,13 +64,37 @@ which means a Kaggle notebook — nothing about it depends on the label work fin
 
 ### Extractor progress vs the 58 gold studies
 
-| | 3a: sentence-only | 3b: section-aware | 4: +Greek, effusion/contusion | 5a: +Turkish-ı, +Bulgarian | 5b: +Turkish negation-verb fix |
-|---|---|---|---|---|---|
-| Macro AUC | 0.685 | 0.688 | 0.710 | 0.728 | **0.734** |
+| | 3a | 3b | 4 | 5a | 5b | 6: +Croatian, bare "OA", Dutch kraakbeen |
+|---|---|---|---|---|---|---|
+| Macro AUC | 0.685 | 0.688 | 0.710 | 0.728 | 0.734 | **0.757** |
 
-Per-label AUC now: ACL 0.906 · Fracture 0.823 · Baker's 0.823 · MCL 0.859 · Lateral Meniscus 0.752 ·
-Medial Meniscus 0.724 · Effusion 0.621 · Contusion 0.677 · Synovitis 0.630 · Lateral OA 0.676 ·
-Medial OA 0.658 · PF OA 0.656
+Per-label AUC now: ACL 0.906 · Fracture 0.823 · Baker's 0.823 · MCL 0.859 · Medial OA 0.778 ·
+Lateral OA 0.757 · Lateral Meniscus 0.773 · Medial Meniscus 0.759 · PF OA 0.680 · Contusion 0.677 ·
+Synovitis 0.630 · Effusion 0.612
+
+## Session 6: chasing the three OA labels (Medial/Lateral/PF)
+
+Same method as before — dumped actual gold disagreements per label rather than guessing. Found
+three gaps, all confirmed by checking real prevalence before investing:
+
+- **Bare "OA" abbreviation.** 270/4,407 reports say "OA" rather than spelling out
+  "osteoarthritis" (e.g. "Incipient OA of all three compartmens") — none of the full-word patterns
+  caught it. Added `\boa\b`, plus "all three compartments" to the both-sides laterality list (covers
+  medial+lateral; PF OA is a separate label so this still slightly undercounts, cheaply accepted).
+- **Croatian, ~5% of the corpus** (214/4,407 reports contain the marker word "promjene"),
+  previously uncovered. Added OA vocabulary (`artroza`, `gonartroza`, `hondromalacija` — a
+  different root spelling from the Romance-language chondromalacia pattern), effusion
+  (`izljev`), negation (`bez`/`nema`), and the medial/lateral terms (only `medijalni` needed a new
+  pattern — `lateralni` already matched the existing `\blateral\w*` prefix).
+- **Dutch "kraakbeen"** (cartilage) is a different root from German "knorpel", so
+  "kraakbeenverlies/-lijden/-schade" (cartilage loss/disease/damage) was invisible despite Dutch
+  otherwise being covered.
+
+**Net this session: 0.734 → 0.757.** All three OA labels moved (Medial 0.658→0.778, Lateral
+0.676→0.757, PF 0.656→0.680); Meniscus labels also picked up spillover gains from the Croatian and
+bare-OA vocabulary. 40 tests still passing, no new regression tests added this session (token-
+conservative pass — the fixes are narrow vocabulary additions of the same shape already covered by
+existing multilingual tests, judged lower-risk than the structural bugs fixed in session 5).
 
 > **This number is not a leaderboard estimate.** There are no reports at test time. It measures
 > *label quality* — how good the training targets are that we hand the imaging model.

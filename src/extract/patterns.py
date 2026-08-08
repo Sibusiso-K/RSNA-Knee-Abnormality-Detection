@@ -97,6 +97,19 @@ OA_TERMS = _alt(
     # хрущял (cartilage loss).
     r"артроз\w*", r"остеоартрит\w*", r"дегенеративн\w*\s+промен\w*",
     r"остеофит\w*", r"загуба\s+на\s+хрущял\w*",
+    # Bare "OA" abbreviation ("OA of all three compartments") — 270/4407
+    # reports use it and none of the full-word patterns above catch it.
+    r"\boa\b",
+    # Croatian (~5% of corpus): artroza/artrotske promjene (arthrosis/-tic
+    # changes), gonartroza (knee OA), hondromalacija (chondromalacia — 'h'
+    # not 'c', a different root spelling from the Romance-language pattern
+    # above so it needs its own entry), degenerativne promjene.
+    r"artroz\w*", r"artrotsk\w*", r"gonartroz\w*", r"hondromalacij\w*",
+    r"degenerativn\w*\s+promjen\w*",
+    # Dutch: "kraakbeen" (cartilage) is a different root from German
+    # "knorpel" — "kraakbeenverlies/-lijden/-schade" (cartilage
+    # loss/disease/damage) was invisible without it.
+    r"kraakbeen(?:verlies|lijden|schade)",
 )
 
 #: Words that put a finding inside bone rather than soft tissue.
@@ -261,6 +274,7 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
             # Bulgarian: ставен излив ("joint effusion", literally
             # "articular discharge") and bare хидропс (hydrops, cognate).
             r"ставен\s+излив", r"хидропс",
+            r"izljev\w*",  # Croatian: izljev (effusion)
         ],
     ),
     "synovitis": ConceptPattern(
@@ -360,6 +374,8 @@ NEGATION_PRE = [
     r"\bδεν\b", r"\bχωρις\b", r"απουσια\s+\w*",
     # Bulgarian: без (without), не (not/no), липса на (absence of).
     r"\bбез\b", r"\bне\b", r"липса\s+на",
+    # Croatian: bez (without), nema (there isn't/no).
+    r"\bbez\b", r"\bnema\b",
 ]
 
 #: Negation appearing AFTER the finding. Turkish puts it there structurally, and
@@ -435,6 +451,8 @@ LATERALITY_MEDIAL = [
     r"\bic\s+yan\b", r"\bmedialis\b",
     r"\bεσω\b",  # Greek: έσω (medial/inner)
     r"медиал\w*",  # Bulgarian
+    r"\bmedijaln\w*\b",  # Croatian ("medijalni" doesn't share a prefix with
+    # "medial", unlike "lateralni" below which already matches \blateral\w*)
 ]
 
 LATERALITY_LATERAL = [
@@ -453,6 +471,9 @@ LATERALITY_BOTH = [
     r"medial\w*\s+y\s+lateral\w*", r"medial\w*\s+e\s+lateral\w*",
     r"αμφοτεροπλευρ\w*",  # Greek: αμφοτερόπλευρα (bilaterally)
     r"двустранн\w*",  # Bulgarian: двустранно (bilaterally)
+    r"all\s+three\s+compartments?",  # covers medial+lateral; PF OA is a
+    # separate label so this pattern undercounts by one, cheaply.
+    r"obostrano",  # Croatian: bilaterally
 ]
 
 #: Patellofemoral compartment — resolves an OA mention away from tibiofemoral.
