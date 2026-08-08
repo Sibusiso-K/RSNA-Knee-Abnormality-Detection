@@ -130,10 +130,18 @@ def test_patellofemoral_oa_routes_away_from_tibiofemoral(extractor):
     assert result["Lateral OA"] == 0.0
 
 
-def test_bone_context_required_for_contusion(extractor):
-    bony = scores(extractor, "Bone marrow oedema in the lateral femoral condyle.")
+def test_contusion_requires_the_explicit_word(extractor):
+    """Session 4: bare "bone marrow edema" was tried as sufficient on its own
+    (edema + a nearby bone word), but measured against the gold studies that
+    fired on subchondral/reactive edema from OA and adjacent lesions just as
+    often as on real contusions — 17 false positives vs 12 true positives.
+    Gold labels reserve Contusion for the explicit bruise/contusion wording,
+    so that's what the pattern now requires."""
+    bare_edema = scores(extractor, "Bone marrow oedema in the lateral femoral condyle.")
+    named = scores(extractor, "Bone contusion of the lateral femoral condyle.")
     soft = scores(extractor, "Soft tissue oedema in the popliteal fat.")
-    assert bony["Contusion"] > 0.5
+    assert bare_edema["Contusion"] == 0.0
+    assert named["Contusion"] > 0.5
     assert soft["Contusion"] == 0.0
 
 

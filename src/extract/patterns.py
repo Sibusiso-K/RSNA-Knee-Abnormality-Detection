@@ -47,10 +47,16 @@ INJURY = _alt(
     r"discontinuity", r"disrupt(?:ion|ed)", r"avulsions?", r"fissur\w*",
     r"lesion\w*", r"lezyon\w*", r"scheur\w*", r"yirtik\w*", r"rottura",
     r"strappo", r"riss\w*", r"insufficien\w*", r"non-?visualiz\w*",
+    # Greek: ρήξη/ρήξεις (rupture/tear) is the standard term; "εκφυλιστική
+    # ρήξη" (degenerative tear) is common phrasing. διάσπαση (disruption).
+    r"ρηξ\w*", r"διασπασ\w*",
 )
 
 #: Lower-grade ligament injury.
-SPRAIN = _alt(r"sprains?", r"esguince\w*", r"entorse\w*", r"zerrung", r"distorsione")
+SPRAIN = _alt(
+    r"sprains?", r"esguince\w*", r"entorse\w*", r"zerrung", r"distorsione",
+    r"θλασ\w*",  # Greek: θλάση (strain/sprain)
+)
 
 #: Degenerative / osteoarthritic change.
 OA_TERMS = _alt(
@@ -72,6 +78,13 @@ OA_TERMS = _alt(
     # as often and shares none of that root.
     r"osteophyt\w*", r"osteofit\w*", r"osteophyten",
     r"marginal\s+spur\w*", r"bony\s+spur\w*", r"spurring",
+    # Greek: οστεοαρθρίτιδα/αρθρίτιδα (osteoarthritis), εκφυλιστικές
+    # αλλοιώσεις (degenerative changes), οστεόφυτα (osteophytes), and the
+    # circumlocution "εξάλειψη [του] ... χόνδρου" (elimination of cartilage,
+    # i.e. full-thickness cartilage loss) seen verbatim in the corpus.
+    r"οστεοαρθριτ\w*", r"αρθριτιδ\w*", r"γοναρθρ\w*",
+    r"εκφυλιστικ\w*\s+αλλοιωσ\w*", r"οστεοφυτ\w*",
+    r"εξαλειψ\w*.{0,25}χονδρ\w*", r"απωλει\w*\s+χονδρ\w*",
 )
 
 #: Words that put a finding inside bone rather than soft tissue.
@@ -80,6 +93,8 @@ BONE = _alt(
     r"osea?s?", r"osseas?", r"osseux", r"osseuse", r"knochen\w*", r"knochig",
     r"kemik", r"been(?:merg)?", r"ossea", r"midollo", r"medular", r"subchondral",
     r"subcondral", r"spongiosa",
+    # Greek: οστ- is the "bone" root (οστό/οστική/οστεομυελικό...).
+    r"οστ\w*",
 )
 
 
@@ -123,6 +138,11 @@ _ACL_STRUCTURE = [
     # German adjectives decline: vordere/vorderen/vorderem/vorderer/vorderes.
     r"vordere[nmrs]?\s+kreuzband\w*", r"voorste\s+kruisband",
     r"on\s+capraz\s+bag",
+    # Greek: πρόσθιος χιαστός σύνδεσμος (anterior cruciate ligament); the
+    # structure alone ("χιαστός σύνδεσμος") is ambiguous between ACL/PCL, so
+    # this requires the "anterior" qualifier, unlike some other languages
+    # above where the ligament name is unambiguous.
+    r"προσθιο\w*\s+χιαστ\w*(?:\s+συνδεσμ\w*)?",
 ]
 
 _MCL_STRUCTURE = [
@@ -135,10 +155,13 @@ _MCL_STRUCTURE = [
     r"innenband", r"mediales?\s+kollateralband",
     r"mediale\s+collaterale\s+band",
     r"ic\s+yan\s+bag",
+    # Greek: έσω πλάγιος σύνδεσμος (medial collateral ligament).
+    r"εσω\s+πλαγιο\w*\s+συνδεσμ\w*",
 ]
 
 _MENISCUS_STRUCTURE = [
     r"menisc\w*", r"menisq\w*", r"menisk\w*", r"menisco\w*",
+    r"μηνισκ\w*",  # Greek
 ]
 
 _PATELLOFEMORAL = [
@@ -147,6 +170,7 @@ _PATELLOFEMORAL = [
     r"patell?ar\s+(?:cartilage|facet)", r"trochlear?", r"troclea\w*",
     r"patell?a\b", r"rotula", r"kniescheibe", r"patellofemoralgelenk",
     r"patellofemoral\s+eklem",
+    r"μηροκνημιαι\w*", r"επιγονατιδομηριαι\w*",  # Greek: patellofemoral
 ]
 
 CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
@@ -194,6 +218,27 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
             r"hidrartros\w*", r"hydrarthros\w*", r"efuzyon",
             r"eklem\s+sivisi", r"joint\s+fluid\s+(?:collection|distension)",
             r"suprapatell?ar\s+distension",
+            # "hydrops" (of the knee/joint) is the everyday Dutch/German term
+            # for effusion, distinct from "Erguss" and easy to miss because
+            # in English "hydrops" usually means something unrelated (fetal
+            # hydrops) — but this corpus is multilingual radiology, where a
+            # bare "hydrops" next to a knee study is joint effusion.
+            r"hydrops",
+            # Dutch circumlocution seen verbatim: "opzetting van [de]
+            # suprapatellaire recessus" (distension of the suprapatellar
+            # recess) — the effusion is named by its location, not a word
+            # meaning "fluid".
+            r"opzetting\s+van\s+(?:de\s+)?suprapatellaire\s+recessus",
+            # Turkish: reports here favour "sıvı artışı/artmış" (fluid
+            # increase) over a dedicated word for effusion. Loosely bound to
+            # a joint/bursa word so it doesn't fire on unrelated fluid
+            # increases (e.g. muscle edema) elsewhere in the same report.
+            r"(?:eklem\w*|suprapatellar\w*|bursa\w*)[^.;]{0,40}sivi\w*\s+art\w*",
+            r"sivi\w*\s+art\w*[^.;]{0,40}(?:eklem\w*|suprapatellar\w*|bursa\w*)",
+            # Greek: "υγρό ενδαρθρικά" / "ενδαρθρικό υγρό" (intra-articular
+            # fluid) and "συλλογή υγρού" (fluid collection).
+            r"υγρ\w*\s+ενδαρθρικ\w*", r"ενδαρθρικ\w*\s+υγρ\w*",
+            r"συλλογ\w*\s+υγρου",
         ],
     ),
     "synovitis": ConceptPattern(
@@ -204,6 +249,7 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
             r"engrosamiento\s+sinovial", r"espessamento\s+sinovial",
             r"epaississement\s+synovial", r"synovialisproliferation",
             r"sinovyal\s+kalinlasma", r"pannus",
+            r"συνοβιτιδ\w*", r"συνοβι\w*\s+παχυνσ\w*",  # Greek
         ],
     ),
     "bakers": ConceptPattern(
@@ -214,17 +260,29 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
             r"kyste\s+poplite\w*", r"quiste\s+poplite\w*",
             r"cisto\s+poplite\w*", r"poplitealzyste", r"popliteal\s+kist\w*",
             r"gastrocnemio-?semimembranosus\s+bursa",
+            # Greek: κύστη Baker is common as-is; also ιγνυακή κύστη
+            # (popliteal cyst — "ιγνύα" = popliteal fossa) and the generic
+            # "συνοβιακή κύστη" (synovial cyst) which in a knee-MRI report is
+            # this finding.
+            r"κυστη\s+baker", r"ιγνυακ\w*\s+κυστ\w*", r"συνοβιακ\w*\s+κυστ\w*",
         ],
     ),
     # --- Bone -----------------------------------------------------------
-    # Anchor+qualifier because bare "contusion"/"edema" is frequently soft
-    # tissue, which is not this label.
+    # Anchor requires the EXPLICIT contusion/bruise word, not bare
+    # "edema"/"oedema". Measured on the gold studies (session 4): matching
+    # "edema" + a nearby bone word (osseous/subchondral/marrow/...) fires on
+    # far more than contusions — subchondral bone marrow edema is just as
+    # characteristic of osteoarthritis, an adjacent osteochondral defect, or
+    # a reactive change near an unrelated ligament tear, and gold labels
+    # reserve Contusion for the specific traumatic bone-bruise pattern.
+    # Bare "edema"/"bone" gave 17 false positives against 12 true positives
+    # (precision 0.41, the worst of the twelve labels) — requiring the word
+    # actually used for the finding trades some recall for a lot of it.
     "contusion": ConceptPattern(
         concept="contusion",
         anchor=[
             r"contusion\w*", r"contusao", r"contusoes", r"bruis\w*",
-            r"kontuzyon\w*", r"oedeme?\w*", r"edema\w*", r"odem\w*",
-            r"ödem\w*", r"oedeem", r"edeme",
+            r"kontuzyon\w*",
         ],
         qualifier=[BONE],
         window=60,
@@ -235,6 +293,7 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
             r"fractures?", r"fractura\w*", r"fratura\w*", r"frattura\w*",
             r"fraktur\w*", r"kirik\w*", r"breuk\w*", r"fissure\s+osseuse",
             r"avulsion\s+fragment",
+            r"καταγμ\w*",  # Greek: κάταγμα (fracture)
         ],
     ),
 }
@@ -266,6 +325,8 @@ NEGATION_PRE = [
     r"\bnon\b", r"\bsenza\b", r"assenza\s+di", r"nessun[ao]?",
     # Dutch
     r"\bgeen\b", r"\bzonder\b",
+    # Greek: δεν (not), χωρίς (without), απουσία (absence of).
+    r"\bδεν\b", r"\bχωρις\b", r"απουσια\s+\w*",
 ]
 
 #: Negation appearing AFTER the finding. Turkish puts it there structurally, and
@@ -278,6 +339,8 @@ NEGATION_POST = [
     r"are\s+not\s+(?:seen|identified|visualized)",
     r"izlenme\w*", r"saptanma\w*", r"gorulume\w*", r"\byoktur\b", r"\byok\b",
     r"\bmevcut\s+degil\b",
+    # Greek: φυσιολογικ- (normal), ακέραι- (intact).
+    r"φυσιολογικ\w*", r"ακεραι\w*",
 ]
 
 #: Words that close a negation's scope. "No effusion, but a meniscal tear" —
@@ -307,6 +370,8 @@ UNCERTAINTY = [
     r"possibil\w*", r"sospett\w*",
     r"mogelijk", r"verdenking",
     r"suphel?i", r"olasi", r"muhtemel",
+    # Greek: πιθαν- (possible/probable), ύποπτ- (suspicious).
+    r"πιθαν\w*", r"υποπτ\w*",
     r"\?",
 ]
 
@@ -315,12 +380,14 @@ LATERALITY_MEDIAL = [
     r"\bmedial\w*\b", r"\bmedio\w*\b", r"\binner\b", r"\bintern[eo]?s?\b",
     r"\binnen\w*\b", r"\bmediaal\b", r"\bmediale[nrs]?\b",
     r"\bic\s+yan\b", r"\bmedialis\b",
+    r"\bεσω\b",  # Greek: έσω (medial/inner)
 ]
 
 LATERALITY_LATERAL = [
     r"\blateral\w*\b", r"\bextern[eo]?s?\b", r"\bouter\b", r"\bexternal\b",
     r"\bausse\w*\b", r"\blateraal\b", r"\blaterale[nrs]?\b",
     r"\bdis\s+yan\b", r"\blateralis\b",
+    r"\bεξω\b",  # Greek: έξω (lateral/outer)
 ]
 
 #: "Both menisci", "medial and lateral compartments".
@@ -329,6 +396,7 @@ LATERALITY_BOTH = [
     r"\bles\s+deux\b", r"\bbeide[nr]?\b", r"\bentrambi\b",
     r"medial\s+and\s+lateral", r"lateral\s+and\s+medial",
     r"medial\w*\s+y\s+lateral\w*", r"medial\w*\s+e\s+lateral\w*",
+    r"αμφοτεροπλευρ\w*",  # Greek: αμφοτερόπλευρα (bilaterally)
 ]
 
 #: Patellofemoral compartment — resolves an OA mention away from tibiofemoral.

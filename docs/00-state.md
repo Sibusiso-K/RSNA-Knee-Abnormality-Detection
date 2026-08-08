@@ -12,13 +12,14 @@
 ## Where we are right now
 
 **Phase 0 — Access: done.** Data is downloaded and the extractor has run against real reports.
-**Phase 1 — Label extraction: first honest number in hand — 0.688 macro AUC vs the gold studies.**
+**Phase 1 — Label extraction: 0.710 macro AUC vs the gold studies**, up from 0.685 at first contact.
 
 The rule-based extractor now understands report *structure*, not just sentences: it parses
 templated section headers (`Medial Meniscus:`, `Medial Compartment:`), inherits concept and
 laterality from them when a sentence is bare ("Tear of the posterior horn."), and excludes
-referral-question / technique sections that would otherwise manufacture false positives. 34 unit
-tests pass. No imaging model exists yet. No submission has been made.
+referral-question / technique sections that would otherwise manufacture false positives. It also
+covers **Greek**, ~7% of the corpus and previously invisible entirely. 34 unit tests pass. No
+imaging model exists yet. No submission has been made.
 
 ### What runs today
 
@@ -32,17 +33,16 @@ python -m pytest tests/ -q                          # 34 tests
 
 ## The next three actions, in order
 
-1. **Work the worst labels using `--disagree`, not guesswork.** Current per-label AUC: Effusion
-   0.533, Contusion 0.570, Medial OA 0.605, PF OA 0.656, Lateral OA 0.684, Medial Meniscus 0.620 are
-   the tail. Effusion in particular is suspicious — it's supposed to be the *easiest* label
-   (see [02-domain-primer.md](02-domain-primer.md)) and is instead the worst. Read actual
-   disagreements before changing patterns again.
-2. **Investigate Contusion's precision (0.385, worst of all twelve).** 16 false positives vs 10
-   true positives suggests the bone-context section fallback (`ctx.bone_context`) is over-firing —
-   possibly matching generic "oedema" under an `Osseous Structures:` header that's actually
-   describing something else in the same section.
+1. **Work the new tail using `--disagree`.** Current per-label AUC: Medial Meniscus 0.637, Medial OA
+   0.658, PF OA 0.656, Lateral OA 0.684, Contusion 0.640 are now the weakest. Medial Meniscus in
+   particular is worth attention — it's a common, clinically important finding and sits well below
+   Lateral Meniscus (0.739) despite using the same pattern logic; check whether medial-side reports
+   have a phrasing quirk lateral doesn't.
+2. **Audit Contusion's remaining false positives (precision 0.615, up from 0.385 but still the
+   second-worst).** The explicit-word fix (below) closed most of the gap; the residual 5 FPs are
+   worth a `--disagree` look before assuming they're noise.
 3. **Then** the open-weights LLM extractor (Phase 1 step 2 in [05-plan.md](05-plan.md)), with this
-   rule extractor — now at 0.688 — as the baseline it has to beat.
+   rule extractor — now at 0.710 — as the baseline it has to beat.
 
 Running in parallel, once labels stabilise: Phase 2's site-grouped CV harness needs DICOM headers,
 which means a Kaggle notebook — nothing about it depends on the label work finishing.
@@ -62,14 +62,13 @@ which means a Kaggle notebook — nothing about it depends on the label work fin
 
 ### Extractor progress vs the 58 gold studies
 
-| | Session 3a (sentence-only) | Session 3b (section-aware) |
-|---|---|---|
-| Macro AUC | 0.685 | **0.688** |
+| | 3a: sentence-only | 3b: section-aware | 4: +Greek, +effusion synonyms, +contusion precision fix |
+|---|---|---|---|
+| Macro AUC | 0.685 | 0.688 | **0.710** |
 
-Roughly flat in aggregate, but that number hides the real work. Per-label AUC now:
-ACL 0.825 · Baker's 0.823 · MCL 0.806 · Fracture 0.762 · Lateral Meniscus 0.739 · Lateral OA 0.684 ·
-PF OA 0.656 · Synovitis 0.630 · Medial Meniscus 0.620 · Medial OA 0.605 · Contusion 0.570 ·
-**Effusion 0.533**
+Per-label AUC now: MCL 0.859 · ACL 0.846 · Baker's 0.823 · Fracture 0.747 · Lateral Meniscus 0.739 ·
+Lateral OA 0.684 · PF OA 0.656 · Medial OA 0.658 · Contusion 0.640 · Medial Meniscus 0.637 ·
+Effusion 0.596 · Synovitis 0.630
 
 > **This number is not a leaderboard estimate.** There are no reports at test time. It measures
 > *label quality* — how good the training targets are that we hand the imaging model.
@@ -105,11 +104,46 @@ Also expanded OA vocabulary — `cartilage fissuring`, `marginal spurring`, `cho
 entirely, catching real positives (Medial OA AUC 0.563 → 0.605) at a small cost to Lateral OA / PF
 OA precision that needs a closer look.
 
-**Effusion regressed slightly overall (0.525 → 0.533, but was worse mid-flight) despite none of
-this work targeting it directly — worth an `--disagree` pass before touching anything else,** since
-it's supposed to be the easiest label per the domain primer and is instead the current worst.
-**Contusion's precision (0.385) is the single worst number in the table** — 16 false positives — and
-is the prime suspect for the `bone_context` section fallback over-firing.
+## Session 4: chasing Effusion and Contusion specifically
+
+### Effusion: 0.533 → 0.596
+
+Dumped every gold-positive Effusion study the extractor missed and read the reports directly.
+Two categories of miss, both fixed:
+
+- **A whole missing language.** `[Ͱ-Ͽ]` (Greek script) appears in **321/4,407 reports
+  (7.3%)** — not a rounding error, a real chunk of the corpus the extractor had zero coverage for.
+  Also found and fixed an upstream data quirk: every Greek **mu** (μ, U+03BC) in the corpus has
+  been silently replaced with the **micro sign** (µ, U+00B5) — almost certainly a font/OCR
+  substitution bug in however these reports were digitized. Folded it in `text.normalize()` so
+  every Greek pattern works against the actual bytes in the data, then added Greek vocabulary
+  for all ten concepts, negation, uncertainty, and laterality (not just effusion).
+- **Circumlocution the direct-term list didn't cover**, per language:
+  - Dutch: `hydrops` (a real medical term for joint effusion, easy to miss because in English
+    "hydrops" usually means something unrelated), and `opzetting van de suprapatellaire recessus`
+    (distension of the suprapatellar recess — named by anatomy, not a "fluid" word at all).
+  - Turkish: reports here favour `sıvı artışı` / `sıvı artmış` (fluid increase) over a dedicated
+    effusion word. Added a loosely-bound pattern requiring a joint/bursa word nearby, so it
+    doesn't fire on unrelated fluid increases elsewhere in the same report.
+  - Greek: `υγρό ενδαρθρικά` (intra-articular fluid), `συλλογή υγρού` (fluid collection).
+
+### Contusion: 0.570 → 0.640 (precision 0.385 → 0.615)
+
+The false-positive dump was unambiguous: almost every false positive was bare **"edema" + a nearby
+bone word** (`subchondral`, `marrow`, `osseous`) — matching subchondral bone marrow edema from
+osteoarthritis, an adjacent osteochondral lesion, or a reactive change near an unrelated ligament
+tear. Gold labels reserve `Contusion` for the traumatic bone-bruise pattern specifically; bone
+marrow edema alone doesn't distinguish it (see [02-domain-primer.md](02-domain-primer.md) —
+contusion, fracture, and OA subchondral change all produce marrow edema, and only the explicit
+wording or trauma context tells them apart from free text alone).
+
+**Fix**: require the explicit word (`contusion`/`bruise`/`kontuzyon`/etc.) rather than bare
+"edema" + bone. This trades some recall (misses a bone bruise described only as "marrow edema
+pattern") for a lot of precision, and measured better on the gold set. A test that encoded the old
+(wrong) assumption was rewritten rather than deleted, so the reasoning survives in the test file.
+
+**Not yet fixed**: the equivalent ambiguity may also affect Fracture, which shares the same marrow-
+edema vocabulary. Worth checking with `--disagree` before assuming it's clean.
 
 ## Blockers
 
@@ -141,6 +175,21 @@ Decisions made and why, so we don't relitigate them. Append, don't rewrite.
 ## Session log
 
 Newest first. One short entry per session: what changed, what was learned.
+
+### 2026-08-08 — Session 4
+- Chased Effusion and Contusion specifically, via `--disagree`-style dumps of actual gold-label
+  false negatives/positives rather than guessing at patterns.
+- Effusion 0.533 → 0.596: found Greek is 7.3% of the corpus (321/4,407 reports) with zero prior
+  coverage; found and fixed a corpus-wide data quirk where Greek mu is encoded as the micro sign;
+  added Greek vocabulary for all ten concepts; added Dutch (`hydrops`, suprapatellar-recess
+  phrasing) and Turkish (`sıvı artışı`) effusion synonyms the direct-term list was missing.
+- Contusion 0.570 → 0.640, precision 0.385 → 0.615: bare "edema" + a nearby bone word was firing on
+  OA/reactive subchondral edema, not just true contusions. Now requires the explicit
+  contusion/bruise word. One test's assumption was disproven by the data and rewritten in place.
+- **Net: 0.688 → 0.710 macro AUC vs gold.** 34 tests still passing.
+- Flagged but not investigated: Fracture may share the same marrow-edema ambiguity that hit
+  Contusion. Medial Meniscus (0.637) now trails Lateral Meniscus (0.739) by a wide margin for no
+  obvious reason yet.
 
 ### 2026-08-08 — Session 3
 - Kaggle auth solved: the new `KGAT_`-style token does **not** go in `kaggle.json` (that is the

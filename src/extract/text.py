@@ -39,7 +39,15 @@ def normalize(text: str) -> str:
     """
     folded = strip_accents(text.lower())
     # Unify the several dash and quote characters reports use interchangeably.
-    folded = folded.translate(str.maketrans({"–": "-", "—": "-", "’": "'", "`": "'"}))
+    # Also fold U+00B5 MICRO SIGN to U+03BC GREEK SMALL LETTER MU: the Greek
+    # reports in this dataset (~7% of the corpus, discovered session 4) use
+    # the micro sign in place of mu throughout — almost certainly a font/OCR
+    # substitution bug upstream, since both render near-identically. Every
+    # Greek word containing mu is silently wrong without this fold, and Greek
+    # patterns in patterns.py are written assuming it has already happened.
+    folded = folded.translate(
+        str.maketrans({"–": "-", "—": "-", "’": "'", "`": "'", "µ": "μ"})
+    )
     return folded
 
 
