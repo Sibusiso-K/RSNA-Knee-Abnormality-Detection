@@ -59,14 +59,44 @@ python -m pytest tests/ -q                          # 34 tests
      missed German "Kein Gelenkerguss" (no effusion) entirely, scoring Effusion=1.0. The rule
      extractor gets both of those right via explicit negation detection — a genuine data point,
      not a foregone conclusion that LLM > regex.
-   - A `--compare` run against the 58 gold studies (qwen2.5-coder:7b vs. the rule baseline) is
-     in flight as of this write-up — CPU-only, ~35-40 min expected. Numbers not in yet; update
-     this section once it lands rather than guessing at the outcome.
+   - **First `--compare` attempt stalled for 50+ min with zero output** — not a fundamental
+     problem, a real diagnostic gap: `extract_frame` printed nothing per-study, and Python fully
+     buffers stdout when redirected to a file, so a genuine hang and normal-but-slow progress were
+     indistinguishable from outside. Fixed: `extract_frame` now prints a `flush=True` line per
+     study (id, char count, elapsed time); script default timeout dropped 180s→90s; added
+     `--limit` for smoke-testing a small fast subset before a full run.
+   - **Verified the fix works**: a 6-study smoke test ran cleanly, ~40s/study, no stalls. LLM
+     scored 0.855 vs. the rule extractor's 0.765 **on that same tiny 6-study slice** — promising
+     but nowhere near a real number (n=6).
+   - **Second attempt (full 58 studies) confirmed the fix works** — reached 14/58 with clean,
+     visible per-study timing (60-130s/study, no hang) before being stopped intentionally to end
+     the session. Rule-extractor half of that run reconfirmed **0.757** exactly, as expected.
+     **The LLM-vs-rule number on the full 58 studies still does not exist — nothing partial was
+     saved (the script only writes output after all 58 complete), so this is a full rerun next
+     session, not a resume.** At the observed pace (~75s/study average), a full run is
+     ~50-70 minutes on this machine's CPU. Don't report an LLM macro AUC until this actually
+     finishes — the only real numbers so far are the 6-study slice (0.855, too small to trust) and
+     the qualitative demo findings above (cleaner than llama3.2, but still misses negation the
+     rule extractor catches).
    - Explicitly staying on local CPU (Ollama) for now per user direction — only move to a Kaggle
      GPU notebook if local hardware genuinely blocks the work, and say so first before switching.
 4. Worth a quick pass: check whether other negation words share the "izlenme" false-friend
    structure in other languages (a wildcarded root that's also a substring of the positive form).
    Found three Turkish instances in one sitting; unclear if it's isolated to Turkish.
+
+## Immediate next step (session 9 starting point)
+
+Just run this — the reliability fix is in, verified working, nothing else to set up:
+
+```bash
+python scripts/extract_labels_llm.py --compare --model qwen2.5-coder:7b --timeout 90
+```
+
+Expect ~50-70 minutes on this machine's CPU with `ollama serve` running. Watch the per-study
+progress lines; if one study visibly stalls past ~2-3 minutes, that's worth investigating (which
+study, how long its report is) rather than just killing and re-running blind. Report the real
+macro AUC once it finishes — do not reuse the 6-study (0.855) or 14/58-partial numbers from
+session 8, neither is a trustworthy estimate of the full-58 result.
 
 Running in parallel, once labels stabilise: Phase 2's site-grouped CV harness needs DICOM headers,
 which means a Kaggle notebook — nothing about it depends on the label work finishing.
@@ -285,6 +315,22 @@ Decisions made and why, so we don't relitigate them. Append, don't rewrite.
 ## Session log
 
 Newest first. One short entry per session: what changed, what was learned.
+
+### 2026-08-08 — Session 8 (LLM extractor built, first full run interrupted)
+- Built `src/extract/llm.py` + `scripts/extract_labels_llm.py`: local-Ollama LLM extractor,
+  same interface as `RuleExtractor`, drops into the existing `evaluate.py` harness.
+- Demo (10 synthetic reports, no data needed): `llama3.2` hallucinates badly (invented findings
+  with zero textual basis on 5/10 cases); `qwen2.5-coder:7b` much cleaner (7/10 clean) but still
+  misses real negations the rule extractor catches (a denied German "Kein Gelenkerguss" scored
+  as present).
+- First full 58-study comparison attempt stalled 50+ min with no output — diagnosed as a real
+  visibility bug (no per-study printing + Python's full stdout buffering when piped to a file),
+  not a fundamental blocker. Fixed: live flushed progress output, shorter default timeout,
+  `--limit` flag for smoke-testing. Verified the fix on a 6-study run (clean, ~40s/study) and
+  a second full-58 attempt (reached 14/58 cleanly, rule-extractor half reconfirmed 0.757) before
+  stopping it intentionally to end the session — see "Immediate next step" above.
+- **No LLM-vs-rule number on the full 58 studies yet.** Next session starts by just running the
+  command in "Immediate next step" above.
 
 ### 2026-08-08 — Session 7 (Effusion/Synovitis, no code change)
 - Chased Effusion and Synovitis per the pattern of prior sessions, but this one ended in a
