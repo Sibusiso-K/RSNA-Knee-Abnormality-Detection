@@ -117,18 +117,46 @@ class LLMExtractor:
         result.scores = llm_result.scores
         return result
 
-    def extract_frame(self, frame, text_column: str = "Report", id_column: str = "StudyInstanceUID"):
+    def extract_frame(
+        self,
+        frame,
+        text_column: str = "Report",
+        id_column: str = "StudyInstanceUID",
+        progress: bool = True,
+    ):
         """Run over a DataFrame of reports, returning a DataFrame of scores.
 
         One HTTP call per row, sequential — this is the CPU-inference-speed
         bottleneck the module docstring warns about. Fine for the 58 gold
         studies; not a tool for the full corpus on this machine.
+
+        `progress=True` prints one line per study, flushed immediately. This
+        is not optional decoration — a run that goes silent for 40+ minutes
+        is indistinguishable from a hang. One report (a ~4,700-char worst
+        case in this corpus, several times longer than typical) can push a
+        7B CPU model well past a minute; without a per-study line there is no
+        way to tell "slow" from "stuck" until it is too late to intervene.
         """
+        import sys
+        import time
+
         import pandas as pd
 
         rows = []
-        for _, row in frame.iterrows():
-            extraction = self.extract(row.get(text_column) or "", str(row.get(id_column, "")))
+        total = len(frame)
+        for i, (_, row) in enumerate(frame.iterrows(), 1):
+            report = row.get(text_column) or ""
+            uid = str(row.get(id_column, ""))
+            if progress:
+                print(
+                    f"[{i}/{total}] {uid[-8:]} ({len(report)} chars)...",
+                    end=" ",
+                    flush=True,
+                )
+            start = time.time()
+            extraction = self.extract(report, uid)
+            if progress:
+                print(f"{time.time() - start:.1f}s", flush=True)
             rows.append({id_column: row.get(id_column), **extraction.scores})
         return pd.DataFrame(rows, columns=[id_column, *TARGETS])
 

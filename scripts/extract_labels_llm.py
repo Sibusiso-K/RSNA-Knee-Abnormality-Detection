@@ -73,7 +73,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
-def _load_gold():
+def _load_gold(limit: int | None = None):
     import pandas as pd
 
     path = DATA / "train.csv"
@@ -83,7 +83,14 @@ def _load_gold():
     train = pd.read_csv(path)
     present = [label for label in TARGETS if label in train.columns]
     gold = train[train[present].notna().any(axis=1)]
-    return gold[[ID_COLUMN, "Report", *present]]
+    gold = gold[[ID_COLUMN, "Report", *present]]
+    if limit:
+        # Shortest reports first: --limit is for a quick smoke test on this
+        # CPU-only machine, not a real benchmark subset, so bias toward fast
+        # cases rather than risk the first study being a multi-thousand-
+        # character worst case.
+        gold = gold.sort_values("Report", key=lambda s: s.str.len()).head(limit)
+    return gold
 
 
 def cmd_evaluate(args: argparse.Namespace) -> int:
@@ -93,7 +100,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     if not _check_server(extractor):
         return 2
 
-    gold = _load_gold()
+    gold = _load_gold(args.limit)
     print(f"gold studies: {len(gold)}  (model: {args.model})")
 
     start = time.time()
@@ -117,7 +124,7 @@ def cmd_compare(args: argparse.Namespace) -> int:
     if not _check_server(llm):
         return 2
 
-    gold = _load_gold()
+    gold = _load_gold(args.limit)
     print(f"gold studies: {len(gold)}\n")
 
     print(f"--- rule extractor (baseline) ---")
@@ -146,7 +153,11 @@ def main() -> int:
     parser.add_argument("--compare", action="store_true")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--threshold", type=float, default=0.5)
-    parser.add_argument("--timeout", type=int, default=180)
+    parser.add_argument("--timeout", type=int, default=90)
+    parser.add_argument(
+        "--limit", type=int, default=None,
+        help="only run the N shortest gold reports — smoke-test before a full run",
+    )
     args = parser.parse_args()
 
     if args.demo:
