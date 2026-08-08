@@ -10,11 +10,15 @@ set -euo pipefail
 COMP=rsna-knee-abnormality-detection
 DEST=data
 
+# `python -m kaggle` rather than the `kaggle` entry point: the console script is
+# not always on PATH (notably in Git Bash on Windows), but the module always is.
+KAGGLE="${KAGGLE:-python -m kaggle}"
+
 mkdir -p "$DEST"
 
 for f in train.csv train_series.csv test.csv test_series.csv sample_submission.csv; do
     echo "==> $f"
-    kaggle competitions download -c "$COMP" -f "$f" -p "$DEST"
+    $KAGGLE competitions download -c "$COMP" -f "$f" -p "$DEST"
 done
 
 # Kaggle serves larger files zipped; unpack anything that arrived that way.

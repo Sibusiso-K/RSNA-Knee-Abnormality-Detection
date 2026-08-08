@@ -54,6 +54,23 @@ That last point is the whole competition. See [01-competition.md](01-competition
 | `Fat_Suppression` | 1 if fat signal is suppressed |
 | `Anatomical_Plane` | `Sagittal` \| `Coronal` \| `Axial` |
 
+> ### ⚠️ Measured 2026-08-08: `Fluid_Sensitive` and `Fat_Suppression` are the same column
+>
+> They are identical in **all 24,371 rows** (crosstab is perfectly diagonal: 14,010 ones,
+> 10,361 zeros, zero off-diagonal). So there is effectively **one** protocol flag, not two.
+>
+> This matters. A fluid-sensitive sequence *without* fat suppression (plain PD or T2 — the
+> workhorse for meniscal tears) cannot be distinguished from one with it, and the routing table
+> below therefore has less resolution than it appears to. "Fluid-sensitive **and** fat-suppressed"
+> as a selector for contusion/fracture collapses to just "fluid-sensitive".
+>
+> Whether this is a labelling artifact or a genuine property of the cohort is worth asking on the
+> forum. Until then, treat the two columns as one binary feature and do not build routing logic
+> that assumes they vary independently.
+
+**Measured shape** (2026-08-08): 24,371 series across 4,407 studies — mean **5.5 series/study**.
+Planes: Sagittal 9,864 · Coronal 8,609 · Axial 5,898.
+
 These four columns are gold — they're pre-extracted protocol metadata that would otherwise take real
 work to derive from DICOM headers, and they drive series routing. Note the forum probe found series
 composition *alone* scores 0.5954 macro AUC, i.e. **which sequences a radiographer chose to acquire

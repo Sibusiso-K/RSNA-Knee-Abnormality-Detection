@@ -101,6 +101,13 @@ def _safe_auc(truth, score) -> float | None:
     return float(roc_auc_score(truth, score))
 
 
+def _fmt(value: float | None) -> str:
+    """Format a metric, tolerating None and NaN."""
+    if value is None or value != value:
+        return "-"
+    return f"{value:.3f}"
+
+
 def format_report(reports: list[LabelReport], macro: float | None) -> str:
     lines = [
         f"{'label':<18}{'n+':>4}{'pred':>6}{'TP':>4}{'FP':>4}{'FN':>4}"

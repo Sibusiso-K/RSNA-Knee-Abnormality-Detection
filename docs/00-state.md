@@ -33,38 +33,69 @@ python -m pytest tests/ -q
 
 ## The next three actions, in order
 
-1. **Join the competition** — sign in at
-   [kaggle.com/competitions/rsna-knee-abnormality-detection](https://www.kaggle.com/competitions/rsna-knee-abnormality-detection)
-   and click *Join Competition* to accept the rules. Nothing downloads until this is done.
-2. **Create an API token** — Kaggle → your avatar → Settings → API → *Create New Token*. It
-   downloads `kaggle.json`. Put it at `C:\Users\lovilocal.adm\.kaggle\kaggle.json`.
-   (See [07-environment.md](07-environment.md) for other machines.)
-3. **Pull the CSVs and audit the extractor against reality** —
-   `bash scripts/download_data.sh`, then:
-   - `python scripts/extract_labels.py --audit 30` — read the mentions it finds and, more
-     importantly, notice what it *misses*. Recall failures are silent.
-   - `python scripts/extract_labels.py --evaluate` — score against the ~58 gold studies.
-   - `python scripts/extract_labels.py --disagree` — dump conflicts with the report text attached.
+1. **Section-aware extraction.** Propagate anatomical context from template headers
+   (`Medial Meniscus:`, `Lateral Compartment:`, `Cruciate Ligaments:`) into the sentences beneath
+   them, and **exclude** indication/history/referral-question sections. Expected to be the largest
+   single gain available — see the lead above.
+2. **Re-measure**, then work the worst labels: Effusion (0.525), Medial OA (0.563),
+   Contusion (0.581). Use `--disagree` to read actual conflicts rather than guessing.
+3. **Then** the open-weights LLM extractor (Phase 1 step 2 in [05-plan.md](05-plan.md)), with the
+   rule extractor as the baseline it has to beat.
 
-Then tune patterns, and only afterwards move to the LLM extractor (Phase 1 step 2 in
-[05-plan.md](05-plan.md)).
+Running in parallel, once labels stabilise: Phase 2's site-grouped CV harness needs DICOM headers,
+which means a Kaggle notebook — nothing about it depends on the label work finishing.
 
-## Open questions the real data will answer
+## Measured facts (2026-08-08, from the real CSVs)
 
-- Which languages actually appear, and in what proportion? Patterns currently cover EN/ES/PT/FR/
-  DE/IT/NL/TR by guesswork.
-- Do reports have section headers at all? `text.py` weights impression above findings, which does
-  nothing if the reports are unstructured prose.
-- Is `PatientSex` really missing, as a forum thread claims?
-- How often is meniscal laterality actually stated? This decides `unresolved_laterality`
-  (`drop` vs `both`) — currently `drop`, untested.
-- How many studies genuinely carry gold labels? "~58" comes from a forum post, not from us.
+| | |
+|---|---|
+| Training studies | **4,407** |
+| Gold-labelled studies | **58** (forum figure confirmed exactly) |
+| Gold balance | Healthy — positives per label range 9 (MCL) to 35 (Effusion). Usable for evaluation, still far too few to train on |
+| Series | 24,371, mean 5.5/study. Sagittal 9,864 · Coronal 8,609 · Axial 5,898 |
+| `PatientSex` | **Absent** — forum report confirmed. Do not plan around it |
+| `Fluid_Sensitive` vs `Fat_Suppression` | **Identical in all 24,371 rows.** One flag, not two — see [03-data-guide.md](03-data-guide.md) |
+| Reports | 4,407, none empty. Median 977 chars, p90 2,118, max 4,743. Clean UTF-8 |
+| Languages (crude probe) | EN ~1,746 · unclassified ~1,173 · ES 574 · TR 406 · DE 264 · NL 150 · FR 76 · IT 18 |
+
+### Extractor baseline: **macro AUC 0.685** vs the 58 gold studies
+
+Per-label AUC: ACL 0.822 · MCL 0.803 · Baker's 0.812 · Fracture 0.761 · Lateral Meniscus 0.735 ·
+Lateral OA 0.699 · PF OA 0.683 · Synovitis 0.622 · Medial Meniscus 0.618 · Contusion 0.581 ·
+Medial OA 0.563 · **Effusion 0.525**
+
+> **This number is not a leaderboard estimate.** There are no reports at test time. It measures
+> *label quality* — how good the training targets are that we hand the imaging model.
+
+## The biggest open lead: reports are often *structured*
+
+Header frequencies across all 4,407 reports show many are templated by anatomy, not free prose:
+
+```
+795 findings   687 conclusion   680 impresion   663 impression   604 technique
+465 medial meniscus     454 lateral meniscus     406 indication
+380 medial compartment  380 lateral compartment  363 patellofemoral compartment
+354 cruciate ligaments  346 medial compartment cartilage   345 osseous structures
+```
+
+**The extractor currently throws this away.** In `Medial Meniscus: Tear of the posterior horn.`
+the sentence splitter breaks at the colon, so the clause carrying the injury contains no meniscus
+anchor and no laterality — no mention is created at all. That is very likely why Medial Meniscus
+recall is 0.500 and Medial OA recall is 0.200 despite obvious positives in the text.
+
+**Fix**: propagate an *anatomical section context* (structure + laterality) from the header down to
+the sentences beneath it, instead of requiring every sentence to be self-contained. Highest-value
+next change by a wide margin.
+
+Second lead: the Dutch sample contains `Diagnostische vraagstelling: Meniscusscheur/mediaal?` — a
+*referral question*, not a finding. Indication/history/question sections need to be **excluded**, or
+they manufacture false positives. Likely explains Contusion precision 0.393.
 
 ## Blockers
 
 | Blocker | Status | Notes |
 |---|---|---|
-| Not joined / no Kaggle API token | **Open** | Needs Sibusiso; 2 min of clicking |
+| Not joined / no Kaggle API token | **Resolved 2026-08-08** | Token lives in `~/.kaggle/access_token`, not `kaggle.json` |
 | 570 GB dataset vs 182 GB free disk | **Permanent constraint** | Never download DICOMs locally. Work in Kaggle notebooks. |
 | No local NVIDIA GPU | **Permanent constraint** | All training on Kaggle (~30 GPU-h/week) or other cloud |
 | Commercial LLM API on report text — allowed? | **Open, no host ruling** | Assume **not** allowed. Build on open weights. |
@@ -90,6 +121,16 @@ Decisions made and why, so we don't relitigate them. Append, don't rewrite.
 ## Session log
 
 Newest first. One short entry per session: what changed, what was learned.
+
+### 2026-08-08 — Session 3
+- Kaggle auth solved: the new `KGAT_`-style token does **not** go in `kaggle.json` (that is the
+  legacy `username`+`key` scheme). It belongs in `~/.kaggle/access_token` as raw text, or use
+  `python -m kaggle auth login`. Also `kaggle` is not on PATH in Git Bash — use `python -m kaggle`.
+- Downloaded the five CSVs (8.8 MB total).
+- Ran the extractor on real reports for the first time: **macro AUC 0.685** vs gold.
+- Fixed a `NameError` in `evaluate.format_report` (`_fmt` was used but never defined).
+- Recorded measured facts above; found the structured-report lead and the
+  `Fluid_Sensitive == Fat_Suppression` data quirk.
 
 ### 2026-08-08 — Session 2
 - Built the Phase 1 rule extractor: `src/extract/` (patterns, negation/uncertainty context,
