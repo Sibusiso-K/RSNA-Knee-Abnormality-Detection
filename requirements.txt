@@ -1,0 +1,12 @@
+kaggle
+numpy
+pandas
+scikit-learn
+torch
+torchvision
+pydicom
+opencv-python
+matplotlib
+jupyter
+tqdm
+transformers

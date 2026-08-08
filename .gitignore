@@ -1,0 +1,11 @@
+data/
+submissions/
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.kaggle/
+kaggle.json
+*.pth
+*.ckpt
+.DS_Store
