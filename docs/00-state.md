@@ -33,10 +33,18 @@ python -m pytest tests/ -q                          # 34 tests
 
 ## The next three actions, in order
 
-1. **Effusion and Synovitis are now the weakest (0.612, 0.630).** Effusion's precision has been
-   sliding as recall climbed (0.914 recall, 0.667 precision) — worth checking whether the vocabulary
-   expansions are now over-firing rather than under-firing. Synovitis hasn't been chased directly
-   yet in any session.
+1. **Effusion and Synovitis were chased in session 7 — no safe fix found, and that's the right
+   outcome, not a stall.** Verified one Effusion false positive directly against the raw CSV: the
+   report's own Impression says "Mild synovitis of right knee joint" while gold Synovitis=0 — a
+   genuine report/label mismatch, independently confirming the forum thread on this. A "not
+   repeated in Impression" heuristic looked promising on a few examples but breaks down because
+   some languages in this corpus (Spanish reports especially) mechanically duplicate Findings into
+   Impression regardless of significance — the signal isn't reliable enough to encode as a rule.
+   For Synovitis: only 3/27 gold positives even have a thickening/hypertrophy fallback word: most
+   gold-positive reports name no synovitis-related term in any language. This is the label the
+   domain primer predicted would be hardest to extract by keyword alone (usually diagnosed with
+   contrast these studies lack) — it needs the LLM extractor, not more regex. **Move to Phase 1
+   step 2 rather than continuing to chase these two by pattern.**
 2. **Consider whether Fracture and Contusion still share the marrow-edema ambiguity noted in
    session 4.** Not yet resolved — needs the host's detailed label-criteria post, not more
    pattern-guessing on 2-3 examples.
@@ -263,6 +271,14 @@ Decisions made and why, so we don't relitigate them. Append, don't rewrite.
 ## Session log
 
 Newest first. One short entry per session: what changed, what was learned.
+
+### 2026-08-08 — Session 7 (Effusion/Synovitis, no code change)
+- Chased Effusion and Synovitis per the pattern of prior sessions, but this one ended in a
+  documented non-fix rather than a score bump — see the next-actions note above for the reasoning.
+  No commit to `src/` this session; `docs/00-state.md` only.
+- Confirms the label set has genuine noise (at least one verified report/label mismatch) and a
+  hard ceiling for keyword-only Synovitis extraction. Both are useful things to know before
+  building the LLM extractor, which is the next real lever for these two labels.
 
 ### 2026-08-08 — Session 4
 - Chased Effusion and Contusion specifically, via `--disagree`-style dumps of actual gold-label
