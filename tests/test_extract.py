@@ -179,3 +179,57 @@ def test_empty_report_is_all_absent(extractor):
 def test_every_target_is_always_present(extractor):
     result = scores(extractor, "Normal knee MRI.")
     assert list(result) == TARGETS
+
+
+# -- section-header awareness ---------------------------------------------
+# These pin the two real bugs found once actual competition reports were
+# available (session 3): the header regex only matched at a literal line
+# start, and OA vocabulary was missing "fissuring"/"spurring"/"chondrosis".
+
+def test_bare_finding_under_anatomical_header(extractor):
+    """"Medial Meniscus: Tear..." names no structure in the sentence itself —
+    the header supplies it. This was the original motivating bug: the
+    sentence-only extractor produced no mention at all here."""
+    report = "FINDINGS: Medial Meniscus: Tear of the posterior horn."
+    result = scores(extractor, report)
+    assert result["Medial Meniscus"] > 0.5
+    assert result["Lateral Meniscus"] == 0.0
+
+
+def test_headers_on_a_single_line_are_still_split(extractor):
+    """Many real reports run every section together on one line, separated
+    by periods rather than newlines: "Technique: ... Findings: ... Derrame."
+    A header regex anchored only to line-start finds just the first header
+    and swallows everything after it into that (often excluded) section —
+    which silently deleted real findings until fixed."""
+    report = "Technique: MRI of the knee. Findings: Joint effusion present."
+    result = scores(extractor, report)
+    assert result["Effusion"] > 0.5
+
+
+def test_indication_section_is_excluded(extractor):
+    """A referral question ("?meniscal tear") is not a finding."""
+    report = (
+        "Indication: Possible meniscal tear, please assess. "
+        "Findings: Menisci are intact."
+    )
+    result = scores(extractor, report)
+    assert result["Medial Meniscus"] == 0.0
+    assert result["Lateral Meniscus"] == 0.0
+
+
+def test_compartment_header_supplies_laterality_for_bare_oa_terms(extractor):
+    report = "Medial Compartment: Cartilage fissuring. Marginal spurring."
+    result = scores(extractor, report)
+    assert result["Medial OA"] > 0.5
+    assert result["Lateral OA"] == 0.0
+
+
+def test_chondrosis_and_spurring_are_recognised(extractor):
+    result = scores(extractor, "Tricompartmental chondrosis with marginal spurring.")
+    # Not lateralized -> dropped by default config, but must be *seen*
+    # (i.e. land in `unresolved`) rather than missed by the vocabulary.
+    extraction = extractor.extract(
+        "Tricompartmental chondrosis with marginal spurring."
+    )
+    assert any(m.concept == "tf_oa" for m in extraction.unresolved)

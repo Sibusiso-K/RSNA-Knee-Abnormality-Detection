@@ -36,6 +36,13 @@ class Mention:
     negated: bool = False
     uncertain: bool = False
     laterality: str | None = None  # "medial" | "lateral" | "both" | None
+    #: True when this mention came from a header-anatomy fallback (e.g. "Tear."
+    #: under a "Medial Meniscus:" header) rather than naming the structure
+    #: itself. Kept for auditing — see sections.py.
+    from_section_context: bool = False
+    #: True when the section is the radiologist's summary (Impression/
+    #: Conclusion). Scored higher than a passing remark in Findings.
+    in_impression: bool = False
 
     @property
     def polarity(self) -> str:

@@ -11,36 +11,38 @@
 
 ## Where we are right now
 
-**Phase 0 — Access: still blocked** (needs Sibusiso; ~2 minutes of clicking).
-**Phase 1 — Label extraction: scaffolding built and tested against synthetic reports.**
+**Phase 0 — Access: done.** Data is downloaded and the extractor has run against real reports.
+**Phase 1 — Label extraction: first honest number in hand — 0.688 macro AUC vs the gold studies.**
 
-The rule-based extractor is written, unit-tested (29 passing), and runs end to end on invented
-reports in five languages. It has **never seen a real report** — every pattern in
-`src/extract/patterns.py` is a hypothesis until audited against `train.csv`.
+The rule-based extractor now understands report *structure*, not just sentences: it parses
+templated section headers (`Medial Meniscus:`, `Medial Compartment:`), inherits concept and
+laterality from them when a sentence is bare ("Tear of the posterior horn."), and excludes
+referral-question / technique sections that would otherwise manufacture false positives. 34 unit
+tests pass. No imaging model exists yet. No submission has been made.
 
-We still have **no data** and have **not joined the competition**. No imaging model exists. No
-submission has been made.
-
-### What runs today, with no data
-
-```bash
-python scripts/extract_labels.py --demo
-```
+### What runs today
 
 ```bash
-python -m pytest tests/ -q
+python scripts/extract_labels.py --evaluate       # score against the 58 gold studies
+python scripts/extract_labels.py --audit 30        # read real extractions
+python scripts/extract_labels.py --disagree        # dump conflicts with report text
+python scripts/extract_labels.py --demo             # synthetic sanity check, no data needed
+python -m pytest tests/ -q                          # 34 tests
 ```
 
 ## The next three actions, in order
 
-1. **Section-aware extraction.** Propagate anatomical context from template headers
-   (`Medial Meniscus:`, `Lateral Compartment:`, `Cruciate Ligaments:`) into the sentences beneath
-   them, and **exclude** indication/history/referral-question sections. Expected to be the largest
-   single gain available — see the lead above.
-2. **Re-measure**, then work the worst labels: Effusion (0.525), Medial OA (0.563),
-   Contusion (0.581). Use `--disagree` to read actual conflicts rather than guessing.
-3. **Then** the open-weights LLM extractor (Phase 1 step 2 in [05-plan.md](05-plan.md)), with the
-   rule extractor as the baseline it has to beat.
+1. **Work the worst labels using `--disagree`, not guesswork.** Current per-label AUC: Effusion
+   0.533, Contusion 0.570, Medial OA 0.605, PF OA 0.656, Lateral OA 0.684, Medial Meniscus 0.620 are
+   the tail. Effusion in particular is suspicious — it's supposed to be the *easiest* label
+   (see [02-domain-primer.md](02-domain-primer.md)) and is instead the worst. Read actual
+   disagreements before changing patterns again.
+2. **Investigate Contusion's precision (0.385, worst of all twelve).** 16 false positives vs 10
+   true positives suggests the bone-context section fallback (`ctx.bone_context`) is over-firing —
+   possibly matching generic "oedema" under an `Osseous Structures:` header that's actually
+   describing something else in the same section.
+3. **Then** the open-weights LLM extractor (Phase 1 step 2 in [05-plan.md](05-plan.md)), with this
+   rule extractor — now at 0.688 — as the baseline it has to beat.
 
 Running in parallel, once labels stabilise: Phase 2's site-grouped CV harness needs DICOM headers,
 which means a Kaggle notebook — nothing about it depends on the label work finishing.
@@ -58,38 +60,56 @@ which means a Kaggle notebook — nothing about it depends on the label work fin
 | Reports | 4,407, none empty. Median 977 chars, p90 2,118, max 4,743. Clean UTF-8 |
 | Languages (crude probe) | EN ~1,746 · unclassified ~1,173 · ES 574 · TR 406 · DE 264 · NL 150 · FR 76 · IT 18 |
 
-### Extractor baseline: **macro AUC 0.685** vs the 58 gold studies
+### Extractor progress vs the 58 gold studies
 
-Per-label AUC: ACL 0.822 · MCL 0.803 · Baker's 0.812 · Fracture 0.761 · Lateral Meniscus 0.735 ·
-Lateral OA 0.699 · PF OA 0.683 · Synovitis 0.622 · Medial Meniscus 0.618 · Contusion 0.581 ·
-Medial OA 0.563 · **Effusion 0.525**
+| | Session 3a (sentence-only) | Session 3b (section-aware) |
+|---|---|---|
+| Macro AUC | 0.685 | **0.688** |
+
+Roughly flat in aggregate, but that number hides the real work. Per-label AUC now:
+ACL 0.825 · Baker's 0.823 · MCL 0.806 · Fracture 0.762 · Lateral Meniscus 0.739 · Lateral OA 0.684 ·
+PF OA 0.656 · Synovitis 0.630 · Medial Meniscus 0.620 · Medial OA 0.605 · Contusion 0.570 ·
+**Effusion 0.533**
 
 > **This number is not a leaderboard estimate.** There are no reports at test time. It measures
 > *label quality* — how good the training targets are that we hand the imaging model.
 
-## The biggest open lead: reports are often *structured*
+## What building section-awareness actually found
 
-Header frequencies across all 4,407 reports show many are templated by anatomy, not free prose:
+Reports are often templated by anatomy, not free prose — header frequencies across all 4,407:
 
 ```
 795 findings   687 conclusion   680 impresion   663 impression   604 technique
 465 medial meniscus     454 lateral meniscus     406 indication
 380 medial compartment  380 lateral compartment  363 patellofemoral compartment
-354 cruciate ligaments  346 medial compartment cartilage   345 osseous structures
 ```
 
-**The extractor currently throws this away.** In `Medial Meniscus: Tear of the posterior horn.`
-the sentence splitter breaks at the colon, so the clause carrying the injury contains no meniscus
-anchor and no laterality — no mention is created at all. That is very likely why Medial Meniscus
-recall is 0.500 and Medial OA recall is 0.200 despite obvious positives in the text.
+Built `src/extract/sections.py`: parses these headers, propagates concept + laterality down to
+bare sentences beneath them ("Tear of the posterior horn." under `Medial Meniscus:`), and excludes
+indication/technique/history sections so referral questions ("possible meniscal tear?") stop
+manufacturing false positives.
 
-**Fix**: propagate an *anatomical section context* (structure + laterality) from the header down to
-the sentences beneath it, instead of requiring every sentence to be self-contained. Highest-value
-next change by a wide margin.
+**Two structural bugs turned up only by running it on real reports, not by reading the code:**
 
-Second lead: the Dutch sample contains `Diagnostische vraagstelling: Meniscusscheur/mediaal?` — a
-*referral question*, not a finding. Indication/history/question sections need to be **excluded**, or
-they manufacture false positives. Likely explains Contusion precision 0.393.
+1. The header regex anchored on line-start (`^`) only. Many reports run every section on **one
+   line separated by periods**, not newlines (`Técnica: ... Resultados: Rotura del LCA. ...`).
+   Only the first header matched; everything after it — including the actual findings — fell
+   inside that one section, and it happened to classify as *excluded*. This silently deleted
+   real findings across an unknown number of reports and measurably regressed Effusion
+   (0.525 → 0.458 mid-fix) before being caught and fixed.
+2. A second, narrower case: a header can immediately follow *another* header's colon with zero
+   sentence content between them (`FINDINGS: Medial Meniscus: Tear...`). The boundary set didn't
+   include `:`, so nested headers like this weren't split either. Fixed alongside the first.
+
+Also expanded OA vocabulary — `cartilage fissuring`, `marginal spurring`, `chondrosis` were missing
+entirely, catching real positives (Medial OA AUC 0.563 → 0.605) at a small cost to Lateral OA / PF
+OA precision that needs a closer look.
+
+**Effusion regressed slightly overall (0.525 → 0.533, but was worse mid-flight) despite none of
+this work targeting it directly — worth an `--disagree` pass before touching anything else,** since
+it's supposed to be the easiest label per the domain primer and is instead the current worst.
+**Contusion's precision (0.385) is the single worst number in the table** — 16 false positives — and
+is the prime suspect for the `bone_context` section fallback over-firing.
 
 ## Blockers
 
@@ -126,11 +146,15 @@ Newest first. One short entry per session: what changed, what was learned.
 - Kaggle auth solved: the new `KGAT_`-style token does **not** go in `kaggle.json` (that is the
   legacy `username`+`key` scheme). It belongs in `~/.kaggle/access_token` as raw text, or use
   `python -m kaggle auth login`. Also `kaggle` is not on PATH in Git Bash — use `python -m kaggle`.
-- Downloaded the five CSVs (8.8 MB total).
-- Ran the extractor on real reports for the first time: **macro AUC 0.685** vs gold.
-- Fixed a `NameError` in `evaluate.format_report` (`_fmt` was used but never defined).
-- Recorded measured facts above; found the structured-report lead and the
+- Downloaded the five CSVs (8.8 MB total). Ran the extractor on real reports for the first time:
+  0.685 macro AUC vs gold. Fixed a `NameError` in `evaluate.format_report` (`_fmt` undefined).
+  Recorded measured facts; found the structured-report lead and the
   `Fluid_Sensitive == Fat_Suppression` data quirk.
+- Built `src/extract/sections.py`: header parsing, concept/laterality inheritance, section
+  exclusion. Found and fixed two real header-regex bugs by running against real reports (see
+  above) — one of which was silently deleting findings, not just missing them. Expanded OA
+  vocabulary (fissuring/spurring/chondrosis). Added 5 regression tests (34 total, all passing).
+  Net: **0.688 macro AUC**. Effusion and Contusion flagged as next targets, not yet fixed.
 
 ### 2026-08-08 — Session 2
 - Built the Phase 1 rule extractor: `src/extract/` (patterns, negation/uncertainty context,

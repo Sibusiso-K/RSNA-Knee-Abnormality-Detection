@@ -60,13 +60,18 @@ OA_TERMS = _alt(
     r"degenerative\s+\w*\s*(?:changes?|disease|arthropathy)",
     r"cambios\s+degenerativos", r"alteracoes\s+degenerativas",
     r"degenerative?\s+veranderungen", r"osteoartrit\w*",
-    r"cartilage\s+(?:loss|thinning|defect|damage)",
-    r"chondral\s+(?:loss|thinning|defect|damage)",
+    r"cartilage\s+(?:loss|thinning|defect|damage|fissur\w*|heterogeneity)",
+    r"chondral\s+(?:loss|thinning|defect|damage|fissur\w*)",
     r"chondromalacia", r"condromalacia", r"chondropath\w*", r"condropat\w*",
-    r"knorpel(?:schaden|verlust|defekt)", r"kartilaj\s+kayb\w*",
+    r"chondrosis", r"condrosis",
+    r"knorpel(?:schaden|verlust|defekt|fissur\w*)", r"kartilaj\s+kayb\w*",
     r"perdida\s+de\s+cartilago", r"perte\s+de\s+cartilage",
     r"joint\s+space\s+narrowing", r"pincement\s+articulaire",
+    # osteophytes: "osteophyt-" covers most Indo-European spellings already;
+    # "spur/spurring" is the everyday English synonym radiologists use just
+    # as often and shares none of that root.
     r"osteophyt\w*", r"osteofit\w*", r"osteophyten",
+    r"marginal\s+spur\w*", r"bony\s+spur\w*", r"spurring",
 )
 
 #: Words that put a finding inside bone rather than soft tissue.

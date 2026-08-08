@@ -17,52 +17,9 @@ from src.extract.types import Sentence
 # prose, so a newline is at least as reliable a boundary as a full stop.
 _BOUNDARY = re.compile(r"(?<=[.;:!?])\s+|\n+|(?:^|\s)[-–—*•]\s+", re.UNICODE)
 
-# "IMPRESSION:", "CONCLUSIONE:", "BEURTEILUNG:" ... a short all-caps-ish run
-# followed by a colon at the start of a line.
-_SECTION_HEADER = re.compile(
-    r"^\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ /]{2,30}?)\s*:", re.UNICODE | re.MULTILINE
-)
-
-#: Section names that mark the radiologist's summary. The impression is the
-#: highest-signal, lowest-noise part of a report — findings sections describe
-#: everything looked at, impressions describe what matters.
-IMPRESSION_HEADERS = {
-    "impression",
-    "impressions",
-    "conclusion",
-    "conclusions",
-    "conclusione",
-    "conclusioni",
-    "conclusao",
-    "conclusion clinique",
-    "opinion",
-    "assessment",
-    "summary",
-    "diagnostico",
-    "diagnosis",
-    "beurteilung",
-    "zusammenfassung",
-    "besluit",
-    "sonuc",
-    "impresion",
-}
-
-FINDINGS_HEADERS = {
-    "findings",
-    "finding",
-    "report",
-    "hallazgos",
-    "achados",
-    "resultats",
-    "resultat",
-    "befund",
-    "befunde",
-    "bevindingen",
-    "reperti",
-    "descripcion",
-    "descricao",
-    "bulgular",
-}
+# NOTE: section-header parsing (headings, impression detection, excluded
+# sections like "Indication:") lives in sections.py now — it grew into its own
+# module once the anatomy-templated reports turned up. See docs/00-state.md.
 
 
 def strip_accents(text: str) -> str:
@@ -107,26 +64,3 @@ def split_sentences(text: str) -> list[Sentence]:
     return sentences
 
 
-def section_of(text: str, position: int) -> str | None:
-    """Which section heading is in force at `position`.
-
-    Returns a normalized heading, or None before the first heading. Used to
-    weight impression-section mentions above findings-section ones.
-    """
-    current: str | None = None
-    for match in _SECTION_HEADER.finditer(text):
-        if match.start() > position:
-            break
-        current = normalize(match.group(1)).strip()
-    return current
-
-
-def section_kind(section: str | None) -> str:
-    """Bucket a raw section heading into 'impression' | 'findings' | 'other'."""
-    if section is None:
-        return "other"
-    if section in IMPRESSION_HEADERS:
-        return "impression"
-    if section in FINDINGS_HEADERS:
-        return "findings"
-    return "other"

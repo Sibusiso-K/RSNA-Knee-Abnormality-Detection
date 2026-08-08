@@ -2,8 +2,10 @@
 
 Pipeline per report:
 
-    normalize -> split sentences -> match concepts -> for each match decide
-    negation / uncertainty / laterality -> aggregate mentions into scores
+    normalize -> parse sections -> split sentences -> for each non-excluded
+    sentence: match concepts (direct, and header-anatomy fallback) -> decide
+    negation / uncertainty / laterality, inheriting from the section header
+    where the sentence itself is silent -> aggregate mentions into scores
 
 Scores are **soft** (0..1), not binary. The competition metric is rank-based
 AUC, so "possible meniscal tear" belonging strictly between absent and present
@@ -16,12 +18,12 @@ word. See docs/05-plan.md.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from src.extract import context, laterality as lat
+from src.extract import sections as S
 from src.extract.patterns import CONCEPT_PATTERNS, ConceptPattern
-from src.extract.text import normalize, section_kind, section_of, split_sentences
+from src.extract.text import normalize, split_sentences
 from src.extract.types import Mention, StudyExtraction
 from src.labels import LATERALIZED, TARGETS, labels_for
 
@@ -43,22 +45,25 @@ class ExtractorConfig:
     #: findings. Multiplies the score; affects ranking only.
     impression_weight: float = 1.0
     findings_weight: float = 0.92
-    other_weight: float = 0.92
 
     negation_window: int = 60
     uncertainty_window: int = 80
     laterality_window: int = 60
 
-    #: What to do with "meniscal tear" when no side is given.
-    #: "drop"   - ignore it (conservative; the mention lands in `unresolved`)
-    #: "both"   - credit both sides, scaled by `unresolved_laterality_weight`
-    #: A/B these against the gold studies; "drop" loses real positives, "both"
-    #: manufactures false ones. Which is better is an empirical question.
+    #: What to do with "meniscal tear" when no side is given anywhere — not
+    #: in-sentence, not from the previous sentence, and not from a section
+    #: header.
+    #: "drop" - ignore it (conservative; the mention lands in `unresolved`)
+    #: "both" - credit both sides, scaled by `unresolved_laterality_weight`
     unresolved_laterality: str = "drop"
     unresolved_laterality_weight: float = 0.5
 
     #: If a sentence gives no side, inherit one from the sentence before it.
     laterality_lookback: bool = True
+
+    #: If still no side, inherit the section header's laterality (e.g. a bare
+    #: "Tear of the posterior horn." under a "Medial Meniscus:" header).
+    laterality_from_section: bool = True
 
 
 class RuleExtractor:
@@ -80,17 +85,22 @@ class RuleExtractor:
             return result
 
         text = normalize(report)
+        report_sections = S.parse(text)
         sentences = split_sentences(text)
 
         for sentence in sentences:
+            ctx = S.context_at(report_sections, sentence.start)
+            if ctx.excluded:
+                # Referral question / technique / history: never a finding.
+                continue
+
             previous = sentences[sentence.index - 1].text if sentence.index else None
-            for mention in self._mentions_in(sentence.text, sentence.index, previous):
-                located = _with_section(mention, text, sentence.start)
+            for mention in self._mentions_in(sentence.text, sentence.index, previous, ctx):
                 if mention.concept in LATERALIZED and mention.laterality is None:
-                    result.unresolved.append(located)
+                    result.unresolved.append(mention)
                     if self.config.unresolved_laterality != "both":
                         continue
-                result.mentions.append(located)
+                result.mentions.append(mention)
 
         result.scores = self._aggregate(result.mentions)
         return result
@@ -112,14 +122,67 @@ class RuleExtractor:
     # -- internals -------------------------------------------------------
 
     def _mentions_in(
-        self, sentence: str, index: int, previous: str | None
+        self,
+        sentence: str,
+        index: int,
+        previous: str | None,
+        ctx: S.SectionContext,
     ) -> list[Mention]:
         mentions: list[Mention] = []
+        matched: set[str] = set()
+
         for name, compiled in self._compiled.items():
             for start, end in compiled.find(sentence):
+                concept = name
+                # An OA term under a header that already names the
+                # compartment is that compartment's OA, not a coin flip
+                # between tibiofemoral and patellofemoral.
+                if concept == "tf_oa" and ctx.concept in ("tf_oa", "pf_oa"):
+                    concept = ctx.concept
                 mentions.append(
-                    self._build(name, sentence, start, end, index, previous)
+                    self._build(concept, sentence, start, end, index, previous, ctx)
                 )
+                matched.add(concept)
+
+        # Header-anatomy fallback: the structure/compartment was named by the
+        # section heading, not the sentence, so match on the qualifier alone.
+        # This is the fix for templated reports like "Medial Meniscus: Tear
+        # of the posterior horn." — see the module docstring in sections.py.
+        if ctx.concept == "meniscus" and "meniscus" not in matched:
+            qualifier = self._compiled["meniscus"].qualifier
+            if qualifier is not None:
+                for match in qualifier.finditer(sentence):
+                    mentions.append(
+                        self._build(
+                            "meniscus", sentence, match.start(), match.end(),
+                            index, previous, ctx, from_section=True,
+                        )
+                    )
+
+        if ctx.concept == "pf_oa" and "pf_oa" not in matched:
+            qualifier = self._compiled["pf_oa"].qualifier
+            if qualifier is not None:
+                for match in qualifier.finditer(sentence):
+                    mentions.append(
+                        self._build(
+                            "pf_oa", sentence, match.start(), match.end(),
+                            index, previous, ctx, from_section=True,
+                        )
+                    )
+
+        # Bone-section fallback: under "Osseous Structures:", "oedema" alone
+        # means bone marrow oedema without needing the word "bone" nearby.
+        if ctx.bone_context and "contusion" not in matched:
+            anchor = self._compiled["contusion"].anchor
+            if anchor is not None:
+                for match in anchor.finditer(sentence):
+                    mentions.append(
+                        self._build(
+                            "contusion", sentence, match.start(), match.end(),
+                            index, previous, ctx, from_section=True,
+                        )
+                    )
+
         return mentions
 
     def _build(
@@ -130,11 +193,15 @@ class RuleExtractor:
         end: int,
         index: int,
         previous: str | None,
+        ctx: S.SectionContext,
+        *,
+        from_section: bool = False,
     ) -> Mention:
         cfg = self.config
         side: str | None = None
+        lateralizable = concept in LATERALIZED or concept == "tf_oa"
 
-        if concept in LATERALIZED or concept == "tf_oa":
+        if lateralizable:
             side = lat.resolve(
                 sentence,
                 start,
@@ -146,6 +213,8 @@ class RuleExtractor:
                 side = lat.resolve(
                     previous, len(previous), len(previous), cfg.laterality_window
                 )
+            if side is None and cfg.laterality_from_section:
+                side = ctx.laterality
 
         # An OA term sided to the kneecap is patellofemoral OA, not tibiofemoral.
         if concept == "tf_oa" and side == "patellofemoral":
@@ -160,12 +229,13 @@ class RuleExtractor:
             negated=context.is_negated(sentence, start, end, cfg.negation_window),
             uncertain=context.is_uncertain(sentence, start, end, cfg.uncertainty_window),
             laterality=side,
+            from_section_context=from_section,
+            in_impression=ctx.impression,
         )
 
     def _aggregate(self, mentions: list[Mention]) -> dict[str, float]:
         cfg = self.config
         scores = {label: cfg.absent_score for label in TARGETS}
-        seen: set[str] = set()
 
         for mention in mentions:
             targets = labels_for(mention.concept, mention.laterality)
@@ -173,18 +243,17 @@ class RuleExtractor:
             if not targets and mention.concept in LATERALIZED:
                 if cfg.unresolved_laterality != "both":
                     continue
-                target = _both_sides(mention.concept)
-                targets, scale = target, cfg.unresolved_laterality_weight
+                targets, scale = _both_sides(mention.concept), cfg.unresolved_laterality_weight
 
+            weight = cfg.impression_weight if mention.in_impression else cfg.findings_weight
             for label in targets:
-                seen.add(label)
                 if mention.negated:
                     value = cfg.negated_score
                 elif mention.uncertain:
                     value = cfg.uncertain_score
                 else:
                     value = cfg.affirmed_score
-                value *= _section_weight(cfg, mention.section) * scale
+                value *= weight * scale
                 # Positive evidence anywhere outweighs a denial elsewhere: a
                 # report saying "possible tear" then "no acute tear" should not
                 # rank below one that never mentions the meniscus at all.
@@ -248,20 +317,3 @@ def _both_sides(concept: str) -> list[str]:
 
     target = CONCEPTS[concept]
     return list(target) if isinstance(target, tuple) else [target]
-
-
-def _section_weight(config: ExtractorConfig, section: str | None) -> float:
-    kind = section_kind(section)
-    if kind == "impression":
-        return config.impression_weight
-    if kind == "findings":
-        return config.findings_weight
-    return config.other_weight
-
-
-def _with_section(mention: Mention, full_text: str, sentence_start: int) -> Mention:
-    from dataclasses import replace
-
-    return replace(
-        mention, section=section_of(full_text, sentence_start + mention.start)
-    )
