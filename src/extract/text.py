@@ -39,14 +39,25 @@ def normalize(text: str) -> str:
     """
     folded = strip_accents(text.lower())
     # Unify the several dash and quote characters reports use interchangeably.
-    # Also fold U+00B5 MICRO SIGN to U+03BC GREEK SMALL LETTER MU: the Greek
-    # reports in this dataset (~7% of the corpus, discovered session 4) use
-    # the micro sign in place of mu throughout — almost certainly a font/OCR
-    # substitution bug upstream, since both render near-identically. Every
-    # Greek word containing mu is silently wrong without this fold, and Greek
-    # patterns in patterns.py are written assuming it has already happened.
+    # Also fold two look-and-mean-alike letters onto the one every pattern is
+    # written against:
+    #   - U+00B5 MICRO SIGN -> U+03BC GREEK SMALL LETTER MU. Every Greek word
+    #     containing mu in this corpus (~7% of it, session 4) uses the micro
+    #     sign instead — almost certainly a font/OCR substitution upstream,
+    #     since the two render near-identically.
+    #   - U+0131 LATIN SMALL LETTER DOTLESS I ("ı", Turkish) -> plain "i".
+    #     This is NOT an accent NFKD strips — dotless ı is a distinct base
+    #     letter, not "i" with a mark removed — so every Turkish pattern
+    #     written with ASCII "i" (kirik, yirtik, sivi, eklem sivisi, ...)
+    #     silently failed to match real Turkish text using "kırık", "yırtık",
+    #     "sıvı" until this fold. Found chasing a Fracture false negative
+    #     ("subkondral kırığı") whose word was in the vocabulary already but
+    #     spelled with the wrong letter.
     folded = folded.translate(
-        str.maketrans({"–": "-", "—": "-", "’": "'", "`": "'", "µ": "μ"})
+        str.maketrans({
+            "–": "-", "—": "-", "’": "'", "`": "'",
+            "µ": "μ", "ı": "i",
+        })
     )
     return folded
 

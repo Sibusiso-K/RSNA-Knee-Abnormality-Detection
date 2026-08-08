@@ -12,7 +12,7 @@
 ## Where we are right now
 
 **Phase 0 — Access: done.** Data is downloaded and the extractor has run against real reports.
-**Phase 1 — Label extraction: 0.710 macro AUC vs the gold studies**, up from 0.685 at first contact.
+**Phase 1 — Label extraction: 0.734 macro AUC vs the gold studies**, up from 0.685 at first contact.
 
 The rule-based extractor now understands report *structure*, not just sentences: it parses
 templated section headers (`Medial Meniscus:`, `Medial Compartment:`), inherits concept and
@@ -33,16 +33,20 @@ python -m pytest tests/ -q                          # 34 tests
 
 ## The next three actions, in order
 
-1. **Work the new tail using `--disagree`.** Current per-label AUC: Medial Meniscus 0.637, Medial OA
-   0.658, PF OA 0.656, Lateral OA 0.684, Contusion 0.640 are now the weakest. Medial Meniscus in
-   particular is worth attention — it's a common, clinically important finding and sits well below
-   Lateral Meniscus (0.739) despite using the same pattern logic; check whether medial-side reports
-   have a phrasing quirk lateral doesn't.
-2. **Audit Contusion's remaining false positives (precision 0.615, up from 0.385 but still the
-   second-worst).** The explicit-word fix (below) closed most of the gap; the residual 5 FPs are
-   worth a `--disagree` look before assuming they're noise.
+1. **Work the new tail using `--disagree`.** Current per-label AUC: Medial OA 0.658, PF OA 0.656,
+   Lateral OA 0.676, Contusion 0.652 are now the weakest. All three OA labels are clustered around
+   0.65-0.68 despite the earlier vocabulary expansion (fissuring/spurring/chondrosis) — worth
+   checking whether OA has the same kind of language-coverage gap that fixed Effusion/Meniscus, or
+   a different problem entirely (severity-threshold ambiguity, most likely, since OA is graded).
+2. **Consider whether Fracture and Contusion still share the marrow-edema ambiguity noted in
+   session 4.** Not yet resolved — two conflicting gold examples (one where "insufficiency
+   fracture" wording is gold=1, two where near-identical wording is gold=0) suggest this needs the
+   host's detailed label-criteria post, not more pattern-guessing on 2-3 examples.
 3. **Then** the open-weights LLM extractor (Phase 1 step 2 in [05-plan.md](05-plan.md)), with this
-   rule extractor — now at 0.710 — as the baseline it has to beat.
+   rule extractor — now at 0.734 — as the baseline it has to beat.
+4. Worth a quick pass: check whether other negation words share the "izlenme" false-friend
+   structure in other languages (a wildcarded root that's also a substring of the positive form).
+   Found three Turkish instances in one sitting; unclear if it's isolated to Turkish.
 
 Running in parallel, once labels stabilise: Phase 2's site-grouped CV harness needs DICOM headers,
 which means a Kaggle notebook — nothing about it depends on the label work finishing.
@@ -62,13 +66,13 @@ which means a Kaggle notebook — nothing about it depends on the label work fin
 
 ### Extractor progress vs the 58 gold studies
 
-| | 3a: sentence-only | 3b: section-aware | 4: +Greek, +effusion synonyms, +contusion precision fix |
-|---|---|---|---|
-| Macro AUC | 0.685 | 0.688 | **0.710** |
+| | 3a: sentence-only | 3b: section-aware | 4: +Greek, effusion/contusion | 5a: +Turkish-ı, +Bulgarian | 5b: +Turkish negation-verb fix |
+|---|---|---|---|---|---|
+| Macro AUC | 0.685 | 0.688 | 0.710 | 0.728 | **0.734** |
 
-Per-label AUC now: MCL 0.859 · ACL 0.846 · Baker's 0.823 · Fracture 0.747 · Lateral Meniscus 0.739 ·
-Lateral OA 0.684 · PF OA 0.656 · Medial OA 0.658 · Contusion 0.640 · Medial Meniscus 0.637 ·
-Effusion 0.596 · Synovitis 0.630
+Per-label AUC now: ACL 0.906 · Fracture 0.823 · Baker's 0.823 · MCL 0.859 · Lateral Meniscus 0.752 ·
+Medial Meniscus 0.724 · Effusion 0.621 · Contusion 0.677 · Synovitis 0.630 · Lateral OA 0.676 ·
+Medial OA 0.658 · PF OA 0.656
 
 > **This number is not a leaderboard estimate.** There are no reports at test time. It measures
 > *label quality* — how good the training targets are that we hand the imaging model.
@@ -144,6 +148,68 @@ pattern") for a lot of precision, and measured better on the gold set. A test th
 
 **Not yet fixed**: the equivalent ambiguity may also affect Fracture, which shares the same marrow-
 edema vocabulary. Worth checking with `--disagree` before assuming it's clean.
+
+## Session 5: chasing Fracture and Medial Meniscus
+
+### Fracture: 0.747 → 0.795
+
+Dumped Fracture false positives and negatives. Found two things, one fixable and one genuinely
+ambiguous — kept them separate rather than guessing at a single fix:
+
+- **Genuinely ambiguous, not fixed**: two Greek false positives both said
+  "μικροδοκιδώδες κάταγμα ανεπάρκειας" (microtrabecular **insufficiency** fracture, synonym SONK)
+  — gold=0 both times. But a Spanish false-negative dump for a *different* study, checked directly
+  against its gold label, showed "subchondral insufficiency fracture" wording scoring gold=**1**.
+  So "insufficiency fracture" phrasing does not reliably predict the gold label either way — this
+  looks like real clinical judgment-call variance in how the 58 gold studies were labelled, not a
+  pattern bug. Documented rather than patched; fixing it from 2-3 conflicting examples would be
+  overfitting the exact thing the evaluation protocol warns against.
+- **A real, fixable, and much bigger bug**: a Turkish false negative used "subkondral **kırığı**"
+  (subchondral fracture) — the word was already in the vocabulary (`kirik\w*`), but spelled with
+  Turkish dotless **ı** (U+0131), a distinct Unicode letter from ASCII "i" (U+0069), not an accent
+  variant of it. Every Turkish pattern written with ASCII "i" — `kirik` (fracture), `yirtik`
+  (tear), `sivi` (fluid), `ic yan` (medial) — was silently failing against real Turkish text using
+  "kırık", "yırtık", "sıvı". Folded ı→i in `text.normalize()`, the same layer that already handles
+  the Greek mu substitution. This is a **corpus-wide fix, not a fracture-specific one** — it
+  touches every Turkish pattern across all twelve labels.
+
+### Medial Meniscus: 0.637 → 0.724 (Lateral Meniscus was 0.739, now 0.730 — the two are now close)
+
+This was the flagged mystery from session 4 — Medial trailing Lateral by a wide margin on
+identical pattern logic. Traced it rather than assuming the Turkish-ı fix explained it: checked
+which newly-detected true positives contain Turkish dotless-ı or Cyrillic script. **5 of them do.**
+So the asymmetry wasn't a Medial-specific bug at all — it was the Turkish-ı fix (Fracture's
+byproduct) plus new Bulgarian meniscus/injury vocabulary (`мениск\w*`, `руптур\w*`, `разкъсв\w*`,
+~5% of the corpus, checked prevalence directly: 220/4,407 reports contain Cyrillic script) landing
+disproportionately on medial-side mentions in this particular 58-study sample. Added Bulgarian
+coverage across all ten concepts, mirroring the Greek session-4 approach, once the 5% prevalence
+number justified the investment.
+
+### A second, bigger Turkish bug found while writing the regression test
+
+Writing a test for the "kırığı" fix ("subkondral kırığı izlenmektedir" — subchondral fracture **is
+observed**) failed even after the ı-fold, tracing to two more issues:
+
+- **Turkish consonant softening**: "kırık" (fracture) → "kırığı" (its fracture) softens the final
+  k to ğ before a vowel suffix — ordinary Turkish morphology, not a typo. Same for "yırtık" (tear)
+  → "yırtığı". Fixed both `kirik\w*` → `kiri[kg]\w*` and `yirtik\w*` → `yirti[kg]\w*`.
+- **A backwards negation pattern, and a bigger one than the fracture case alone.**
+  `izlenme\w*` was meant to catch "not observed," but Turkish "izlenmektedir" (**is** observed —
+  positive) and "izlenmemektedir" (is **not** observed — negative) both start with the substring
+  "izlenme," because "-mekte(dir)" is a present-tense suffix that happens to start with "me"
+  regardless of polarity — it isn't the negation morpheme itself. The wildcard therefore matched
+  the affirmative form too and **negated real positive findings**. `saptanma\w*` had the identical
+  structural bug. `gorulume\w*` had it *and* a spelling typo (extra "u" — "görülme" normalizes to
+  "gorulme," not "gorulume," so this one likely never matched its intended word at all in any
+  report). Replaced all three with explicit negative-suffix enumeration
+  (`izlen(?:medi|memis|memekte)\w*` and parallel forms) rather than wildcarding past the ambiguous
+  root. This is corpus-wide, not fracture-specific — it touches every Turkish positive finding that
+  used one of these three very common radiology-report verbs.
+
+**Net this session: 0.710 → 0.734 macro AUC** (0.728 after the ı/Bulgarian pass, 0.734 after the
+negation-verb fix on top). 40 tests passing (6 new this session, all currently green — the
+Turkish-fracture test failed once mid-session and stayed red until the consonant-softening +
+negation fixes actually resolved it, rather than being adjusted to match wrong behavior).
 
 ## Blockers
 

@@ -45,11 +45,18 @@ INJURY = _alt(
     r"roturas?", r"desgarros?", r"dechirures?", r"rompu[es]?", r"risse?",
     r"rissbildung", r"lacerations?", r"laceracao", r"lacerazione",
     r"discontinuity", r"disrupt(?:ion|ed)", r"avulsions?", r"fissur\w*",
-    r"lesion\w*", r"lezyon\w*", r"scheur\w*", r"yirtik\w*", r"rottura",
+    # Turkish "yırtık" (tear) softens its final k to ğ before a vowel suffix
+    # ("yırtığı" = "its tear") — normal Turkish consonant mutation, not a
+    # typo. After the ı->i fold both spellings differ only in that last
+    # consonant, hence [kg] rather than a fixed "k".
+    r"lesion\w*", r"lezyon\w*", r"scheur\w*", r"yirti[kg]\w*", r"rottura",
     r"strappo", r"riss\w*", r"insufficien\w*", r"non-?visualiz\w*",
     # Greek: ρήξη/ρήξεις (rupture/tear) is the standard term; "εκφυλιστική
     # ρήξη" (degenerative tear) is common phrasing. διάσπαση (disruption).
     r"ρηξ\w*", r"διασπασ\w*",
+    # Bulgarian (Cyrillic, ~5% of the corpus, found session 5): руптура
+    # (rupture, cognate), разкъсване (tear).
+    r"руптур\w*", r"разкъсв\w*",
 )
 
 #: Lower-grade ligament injury.
@@ -85,6 +92,11 @@ OA_TERMS = _alt(
     r"οστεοαρθριτ\w*", r"αρθριτιδ\w*", r"γοναρθρ\w*",
     r"εκφυλιστικ\w*\s+αλλοιωσ\w*", r"οστεοφυτ\w*",
     r"εξαλειψ\w*.{0,25}χονδρ\w*", r"απωλει\w*\s+χονδρ\w*",
+    # Bulgarian: артроза/остеоартрит (arthrosis/osteoarthritis), дегенеративни
+    # промени (degenerative changes), остеофити (osteophytes), загуба на
+    # хрущял (cartilage loss).
+    r"артроз\w*", r"остеоартрит\w*", r"дегенеративн\w*\s+промен\w*",
+    r"остеофит\w*", r"загуба\s+на\s+хрущял\w*",
 )
 
 #: Words that put a finding inside bone rather than soft tissue.
@@ -95,6 +107,8 @@ BONE = _alt(
     r"subcondral", r"spongiosa",
     # Greek: οστ- is the "bone" root (οστό/οστική/οστεομυελικό...).
     r"οστ\w*",
+    # Bulgarian: кост- is the "bone" root (кост/костномозъчен...).
+    r"кост\w*",
 )
 
 
@@ -143,6 +157,8 @@ _ACL_STRUCTURE = [
     # this requires the "anterior" qualifier, unlike some other languages
     # above where the ligament name is unambiguous.
     r"προσθιο\w*\s+χιαστ\w*(?:\s+συνδεσμ\w*)?",
+    # Bulgarian: предна кръстна връзка (anterior cruciate ligament).
+    r"предна\s+кръстна\s+връзк\w*",
 ]
 
 _MCL_STRUCTURE = [
@@ -157,11 +173,14 @@ _MCL_STRUCTURE = [
     r"ic\s+yan\s+bag",
     # Greek: έσω πλάγιος σύνδεσμος (medial collateral ligament).
     r"εσω\s+πλαγιο\w*\s+συνδεσμ\w*",
+    # Bulgarian: вътрешна странична връзка (medial/inner collateral ligament).
+    r"вътрешн\w*\s+странична?\w*\s+връзк\w*",
 ]
 
 _MENISCUS_STRUCTURE = [
     r"menisc\w*", r"menisq\w*", r"menisk\w*", r"menisco\w*",
     r"μηνισκ\w*",  # Greek
+    r"мениск\w*",  # Bulgarian
 ]
 
 _PATELLOFEMORAL = [
@@ -239,6 +258,9 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
             # fluid) and "συλλογή υγρού" (fluid collection).
             r"υγρ\w*\s+ενδαρθρικ\w*", r"ενδαρθρικ\w*\s+υγρ\w*",
             r"συλλογ\w*\s+υγρου",
+            # Bulgarian: ставен излив ("joint effusion", literally
+            # "articular discharge") and bare хидропс (hydrops, cognate).
+            r"ставен\s+излив", r"хидропс",
         ],
     ),
     "synovitis": ConceptPattern(
@@ -250,6 +272,7 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
             r"epaississement\s+synovial", r"synovialisproliferation",
             r"sinovyal\s+kalinlasma", r"pannus",
             r"συνοβιτιδ\w*", r"συνοβι\w*\s+παχυνσ\w*",  # Greek
+            r"синовит\w*",  # Bulgarian
         ],
     ),
     "bakers": ConceptPattern(
@@ -265,6 +288,9 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
             # "συνοβιακή κύστη" (synovial cyst) which in a knee-MRI report is
             # this finding.
             r"κυστη\s+baker", r"ιγνυακ\w*\s+κυστ\w*", r"συνοβιακ\w*\s+κυστ\w*",
+            # Bulgarian: бейкърова киста (Baker's cyst), поплитеална киста
+            # (popliteal cyst).
+            r"бейкъров\w*\s+кист\w*", r"поплитеалн\w*\s+кист\w*",
         ],
     ),
     # --- Bone -----------------------------------------------------------
@@ -283,6 +309,7 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
         anchor=[
             r"contusion\w*", r"contusao", r"contusoes", r"bruis\w*",
             r"kontuzyon\w*",
+            r"контузи\w*",  # Bulgarian
         ],
         qualifier=[BONE],
         window=60,
@@ -291,9 +318,13 @@ CONCEPT_PATTERNS: dict[str, ConceptPattern] = {
         concept="fracture",
         direct=[
             r"fractures?", r"fractura\w*", r"fratura\w*", r"frattura\w*",
-            r"fraktur\w*", r"kirik\w*", r"breuk\w*", r"fissure\s+osseuse",
+            # Same Turkish consonant softening as "yirtik" above: "kırık"
+            # (fracture) -> "kırığı" (its fracture, k->ğ before the vowel
+            # suffix). Both normalize to differ only in the final consonant.
+            r"fraktur\w*", r"kiri[kg]\w*", r"breuk\w*", r"fissure\s+osseuse",
             r"avulsion\s+fragment",
             r"καταγμ\w*",  # Greek: κάταγμα (fracture)
+            r"фрактур\w*",  # Bulgarian (cognate)
         ],
     ),
 }
@@ -327,6 +358,8 @@ NEGATION_PRE = [
     r"\bgeen\b", r"\bzonder\b",
     # Greek: δεν (not), χωρίς (without), απουσία (absence of).
     r"\bδεν\b", r"\bχωρις\b", r"απουσια\s+\w*",
+    # Bulgarian: без (without), не (not/no), липса на (absence of).
+    r"\bбез\b", r"\bне\b", r"липса\s+на",
 ]
 
 #: Negation appearing AFTER the finding. Turkish puts it there structurally, and
@@ -337,10 +370,27 @@ NEGATION_POST = [
     r"\bpreserved\b", r"\bconserv\w+\b", r"normale?n?\b", r"unauffallig\w*",
     r"is\s+not\s+(?:seen|identified|visualized)",
     r"are\s+not\s+(?:seen|identified|visualized)",
-    r"izlenme\w*", r"saptanma\w*", r"gorulume\w*", r"\byoktur\b", r"\byok\b",
+    # Turkish observation verbs are dangerous: "izlenmektedir" (IS observed —
+    # positive) and "izlenmemektedir" (is NOT observed — negative) both start
+    # with the substring "izlenme", because "-mekte(dir)" is a present-tense
+    # suffix that happens to start with "me" regardless of polarity — it's
+    # not the negation morpheme itself. A bare `izlenme\w*` therefore matches
+    # the affirmative form too and negates real positive findings. Found
+    # session 5 chasing a Fracture false negative that said "kırığı
+    # izlenmektedir" (fracture IS observed) and got wrongly negated.
+    # `saptanma\w*` had the identical bug. `gorulume\w*` had it AND a typo
+    # (extra "u" — "görülme" normalizes to "gorulme", not "gorulume", so this
+    # one likely never matched its intended word at all). Enumerate the
+    # actual negative suffixes instead of wildcarding past the ambiguous root.
+    r"izlen(?:medi\w*|memis\w*|memekte\w*)",
+    r"saptan(?:madi\w*|mamis\w*|mamakta\w*)",
+    r"gorul(?:medi\w*|memis\w*|memekte\w*)",
+    r"\byoktur\b", r"\byok\b",
     r"\bmevcut\s+degil\b",
     # Greek: φυσιολογικ- (normal), ακέραι- (intact).
     r"φυσιολογικ\w*", r"ακεραι\w*",
+    # Bulgarian: нормал- (normal), запазен- (preserved/intact).
+    r"нормал\w*", r"запазен\w*",
 ]
 
 #: Words that close a negation's scope. "No effusion, but a meniscal tear" —
@@ -372,6 +422,9 @@ UNCERTAINTY = [
     r"suphel?i", r"olasi", r"muhtemel",
     # Greek: πιθαν- (possible/probable), ύποπτ- (suspicious).
     r"πιθαν\w*", r"υποπτ\w*",
+    # Bulgarian: вероятно (probably), възможн- (possible), съмнение за
+    # (suspicion of).
+    r"вероятно", r"възможн\w*", r"съмнение\s+за",
     r"\?",
 ]
 
@@ -381,6 +434,7 @@ LATERALITY_MEDIAL = [
     r"\binnen\w*\b", r"\bmediaal\b", r"\bmediale[nrs]?\b",
     r"\bic\s+yan\b", r"\bmedialis\b",
     r"\bεσω\b",  # Greek: έσω (medial/inner)
+    r"медиал\w*",  # Bulgarian
 ]
 
 LATERALITY_LATERAL = [
@@ -388,6 +442,7 @@ LATERALITY_LATERAL = [
     r"\bausse\w*\b", r"\blateraal\b", r"\blaterale[nrs]?\b",
     r"\bdis\s+yan\b", r"\blateralis\b",
     r"\bεξω\b",  # Greek: έξω (lateral/outer)
+    r"латерал\w*",  # Bulgarian
 ]
 
 #: "Both menisci", "medial and lateral compartments".
@@ -397,6 +452,7 @@ LATERALITY_BOTH = [
     r"medial\s+and\s+lateral", r"lateral\s+and\s+medial",
     r"medial\w*\s+y\s+lateral\w*", r"medial\w*\s+e\s+lateral\w*",
     r"αμφοτεροπλευρ\w*",  # Greek: αμφοτερόπλευρα (bilaterally)
+    r"двустранн\w*",  # Bulgarian: двустранно (bilaterally)
 ]
 
 #: Patellofemoral compartment — resolves an OA mention away from tibiofemoral.

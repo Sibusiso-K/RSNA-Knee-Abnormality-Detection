@@ -44,6 +44,21 @@ def test_split_sentences_handles_newlines_and_stops():
     assert [p.text for p in parts] == ["ACL tear.", "No effusion;", "small cyst"]
 
 
+def test_normalize_folds_turkish_dotless_i():
+    """U+0131 (Turkish dotless ı) is a distinct base letter, not an accented
+    "i" — NFKD accent-stripping does not touch it. Every Turkish pattern is
+    written with ASCII "i" and silently failed against real words like
+    "kırık" (fracture) and "sıvı" (fluid) until this fold (session 5)."""
+    assert normalize("KIRIK") == "kirik"
+    assert "ı" not in normalize("sıvı artışı")
+
+
+def test_normalize_folds_greek_micro_sign():
+    """U+00B5 MICRO SIGN stands in for Greek mu (U+03BC) throughout this
+    corpus — an upstream font/OCR artifact, not a legitimate variant."""
+    assert normalize("µηνίσκου") == normalize("μηνίσκου")
+
+
 # -- negation ------------------------------------------------------------
 
 def test_negation_before_finding():
@@ -231,6 +246,34 @@ def test_compartment_header_supplies_laterality_for_bare_oa_terms(extractor):
     result = scores(extractor, report)
     assert result["Medial OA"] > 0.5
     assert result["Lateral OA"] == 0.0
+
+
+def test_turkish_dotless_i_in_fracture_word(extractor):
+    """Real false negative from session 5: "subkondral kırığı" (subchondral
+    fracture) used dotless ı throughout; the word "kirik" was already in the
+    vocabulary but written with ASCII i, so it never matched."""
+    result = scores(extractor, "Subkondral kırığı izlenmektedir.")
+    assert result["Fracture"] > 0.5
+
+
+def test_bulgarian_meniscus_tear(extractor):
+    result = scores(extractor, "Разкъсване на медиалния менискус.")
+    assert result["Medial Meniscus"] > 0.5
+    assert result["Lateral Meniscus"] == 0.0
+
+
+def test_bulgarian_negation(extractor):
+    result = scores(extractor, "Без данни за фрактура. Ставите са нормални.")
+    assert result["Fracture"] == 0.0
+
+
+def test_greek_effusion_and_negation(extractor):
+    result = scores(
+        extractor,
+        "Παρατηρείται μέτρια ποσότητα υγρού ενδαρθρικά. Δεν παρατηρείται κάταγμα.",
+    )
+    assert result["Effusion"] > 0.5
+    assert result["Fracture"] == 0.0
 
 
 def test_chondrosis_and_spurring_are_recognised(extractor):
