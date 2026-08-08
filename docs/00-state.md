@@ -48,8 +48,22 @@ python -m pytest tests/ -q                          # 34 tests
 2. **Consider whether Fracture and Contusion still share the marrow-edema ambiguity noted in
    session 4.** Not yet resolved — needs the host's detailed label-criteria post, not more
    pattern-guessing on 2-3 examples.
-3. **Then** the open-weights LLM extractor (Phase 1 step 2 in [05-plan.md](05-plan.md)), with this
-   rule extractor — now at 0.757 — as the baseline it has to beat.
+3. **LLM extractor (Phase 1 step 2) is now under construction** — `src/extract/llm.py` +
+   `scripts/extract_labels_llm.py`, built session 8. Runs against a local Ollama server, open
+   weights only, so report text never leaves the machine. Same `StudyExtraction`/`extract_frame`
+   interface as `RuleExtractor`, so it plugs into the existing `evaluate.py` harness directly.
+   - `--demo` (10 synthetic reports, no data needed) already ran against both locally-available
+     models: **`llama3.2` hallucinates badly** — invented meniscus tears and synovitis findings
+     with zero textual basis, on 5 of 10 cases. **`qwen2.5-coder:7b` is much cleaner** (7/10 clean)
+     but still has real negation misses: scored "No joint effusion" as 0.4 instead of 0 once, and
+     missed German "Kein Gelenkerguss" (no effusion) entirely, scoring Effusion=1.0. The rule
+     extractor gets both of those right via explicit negation detection — a genuine data point,
+     not a foregone conclusion that LLM > regex.
+   - A `--compare` run against the 58 gold studies (qwen2.5-coder:7b vs. the rule baseline) is
+     in flight as of this write-up — CPU-only, ~35-40 min expected. Numbers not in yet; update
+     this section once it lands rather than guessing at the outcome.
+   - Explicitly staying on local CPU (Ollama) for now per user direction — only move to a Kaggle
+     GPU notebook if local hardware genuinely blocks the work, and say so first before switching.
 4. Worth a quick pass: check whether other negation words share the "izlenme" false-friend
    structure in other languages (a wildcarded root that's also a substring of the positive form).
    Found three Turkish instances in one sitting; unclear if it's isolated to Turkish.
