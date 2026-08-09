@@ -1,5 +1,9 @@
-data/
-submissions/
+# Leading slash anchors these to the repo root. Without it, "data/" matches a
+# directory named "data" at ANY depth — which silently excluded src/data/
+# (source code the Kaggle notebooks import) along with the competition CSVs
+# it was meant to ignore.
+/data/
+/submissions/
 .venv/
 __pycache__/
 *.pyc
