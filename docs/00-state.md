@@ -112,6 +112,63 @@ than wrap, centre channel preserved), attention pooling normalisation, `pos_weig
 labels while staying capped, full forward pass (2,3,16,64,64)→(2,12), **GroupKFold splitting no
 group across folds**, and macro-AUC skipping single-class labels.
 
+### Session 10: Kaggle live — smoke passed, fold 0 training
+
+**Everything runs on Kaggle now.** Datasets `knee-src` + `knee-labels` (both **private** —
+`labels_v1.csv` is derived from competition report text, so publishing it would be prohibited
+sharing of competition-derived work product). Kernels: `knee-smoke`, `knee-train`, `knee-submit`.
+
+Driven entirely through the **Kaggle CLI**, not browser automation: `kernels push` is
+reproducible and version-controlled, and file-picker automation is where these setups break.
+(The Chrome profile on this machine is not signed in to Kaggle, so the UI route wasn't available
+anyway.)
+
+#### Smoke test results (T4) — all green
+
+| Check | Result |
+|---|---|
+| Path resolution | src + competition both found |
+| Data | 4,407 studies / 24,371 series |
+| DICOM decode | Explicit VR Little Endian OK |
+| Load speed | **1.3 s/study** → epoch ~0.8 h, inference ~0.2 h vs the **9 h cap** |
+| Plane coverage | 3/3 planes on 8/8 studies |
+| Volume sanity | per-plane std 0.18–0.32 (real signal, not blanks) |
+| GPU fwd+bwd | logits (2,12), **peak 7.7 GB of ~15 GB** |
+
+**Consequence: no `.npy` preprocessing cache needed.** An epoch is under an hour, so the caching
+stage in [03-data-guide.md](03-data-guide.md) step 6 is unnecessary — skip it.
+
+#### Five bugs the pre-flight caught (none reached a real training run)
+
+1. **`.gitignore` ate `src/data/`.** `data/` with no leading slash matches a `data` dir at *any*
+   depth, so `dicom.py` — imported by every notebook — was never committed. Anchored to `/data/`.
+2. **Kaggle flattens uploaded dataset folders**, and `knee-src` isn't a legal package name, so
+   `from src.… import` failed. Notebooks rebuild a real package under `/kaggle/working`.
+3. **Kaggle mounts inputs as a nested tree** (`/kaggle/input/{competitions,datasets}/…`), not the
+   flat `/kaggle/input/<slug>/` that public example code assumes. **Every hardcoded path was
+   wrong, including `COMP`.** All paths now resolve by walking `/kaggle/input` for marker files.
+4. **Dead `find_dir_ckpt()` call + `os.path.isdir(None)`** — `py_compile` passes both since it only
+   checks syntax. Added an AST undefined-name check that caught them.
+5. **P100 vs PyTorch.** Kaggle defaulted to a Tesla P100 (sm_60); Kaggle's PyTorch supports sm_70+
+   only, so every CUDA op died with `cudaErrorNoKernelImageForDevice`. The CLI *does* select an
+   accelerator, but **the value is case-sensitive and invalid strings are accepted silently** —
+   `nvidiaTeslaT4` was ignored and fell back to P100 twice. Proved it by pushing a garbage value
+   (`ZZINVALID`, accepted without error), then used the documented **`NvidiaTeslaT4`**.
+
+> **Always pass `--accelerator NvidiaTeslaT4` when pushing a GPU kernel.** Omitting it silently
+> gives a P100, which cannot run our model at all.
+
+#### Batch size, forced by the memory measurement
+
+7.7 GB at batch 2 means batch 4 would sit on the T4 ceiling and OOM mid-epoch. So `BATCH=2` with
+`ACCUM=4` (effective batch 8, unchanged). Loss is divided by `ACCUM` so accumulated gradients
+average rather than sum, and `OneCycleLR.total_steps` counts **optimiser** steps, not batches —
+otherwise the schedule runs off its end mid-training and raises.
+
+Verified numerically rather than by inspection: batch-2×4 accumulation produces parameters
+**identical** to a true batch-8 step, and the optimiser-step count (1652) fits the schedule
+budget (1656).
+
 ### Kaggle run order
 
 1. Upload `src/` as a Kaggle Dataset (`knee-src`) and `data/labels_v1.csv` (`knee-labels`).
