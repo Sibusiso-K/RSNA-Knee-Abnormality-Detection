@@ -37,43 +37,59 @@ import shutil
 
 PKG = "/kaggle/working/pkg"
 INPUT = "/kaggle/input"
-print("mounted inputs:", sorted(os.listdir(INPUT)) if os.path.isdir(INPUT) else "NONE")
 
 
-def _find_src():
-    """Locate the src dataset by CONTENT, not by name.
+def find_dir(marker, max_depth=5):
+    """Find the directory containing `marker`, anywhere under /kaggle/input.
 
-    Kaggle mounts a dataset under a directory named from its slug, but that
-    name can differ from what kernel-metadata.json requested (renames, version
-    lag, a dataset attached by hand in the UI). Probing for a file we know is
-    in the package is robust to all of that; hardcoding the path is not.
+    Kaggle's mount layout is NOT what most example code assumes. This account
+    gets a nested tree -- /kaggle/input/{competitions,datasets}/... -- while
+    public snippets hardcode flat /kaggle/input/<slug>/. Kaggle also strips the
+    top-level folder of an uploaded dataset. Hardcoding any of that is how a
+    notebook dies on its first line after queueing for ten minutes.
+
+    Searching by CONTENT survives all of it: nesting, renames, version lag, and
+    datasets attached by hand in the UI.
     """
     if not os.path.isdir(INPUT):
         return None
-    for name in sorted(os.listdir(INPUT)):
-        candidate = os.path.join(INPUT, name)
-        if os.path.isdir(candidate) and os.path.exists(os.path.join(candidate, "labels.py")):
-            return candidate
+    stack = [(INPUT, 0)]
+    while stack:
+        directory, depth = stack.pop()
+        if depth > max_depth:
+            continue
+        try:
+            entries = os.listdir(directory)
+        except OSError:
+            continue
+        if marker in entries:
+            return directory
+        for entry in entries:
+            path = os.path.join(directory, entry)
+            if os.path.isdir(path):
+                stack.append((path, depth + 1))
     return None
 
 
-_src = _find_src()
-if _src is None:
+print("=== resolving input paths ===")
+_src = find_dir("labels.py")
+COMP = find_dir("train_series.csv")
+print("  src :", _src)
+print("  comp:", COMP)
+if _src is None or COMP is None:
     raise SystemExit(
-        "knee-src is not attached to this kernel. "
-        "Fix: notebook sidebar -> + Add Input -> Datasets -> knee-src, "
-        "or verify dataset_sources in kernel-metadata.json."
+        "Missing input. Attach knee-src (Datasets) and the competition "
+        "(Competitions) in the notebook sidebar, or fix kernel-metadata.json."
     )
-print("using src from:", _src)
-if not os.path.exists(f"{PKG}/src"):
+
+if not os.path.exists(PKG + "/src"):
     os.makedirs(PKG, exist_ok=True)
-    shutil.copytree(_src, f"{PKG}/src")
+    shutil.copytree(_src, PKG + "/src")
 sys.path.insert(0, PKG)
 # -------------------------------------------------------------------------
 
 from src.data.dicom import PLANES, load_study, pick_series  # noqa: E402
 
-COMP = "/kaggle/input/rsna-knee-abnormality-detection"
 ID = "StudyInstanceUID"
 N_SLICES, SIZE = 16, 224
 
