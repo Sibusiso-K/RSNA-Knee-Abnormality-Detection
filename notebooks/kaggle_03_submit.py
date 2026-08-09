@@ -36,11 +36,39 @@ SRC = "/kaggle/input/knee-src"
 # training notebook on purpose: inference must import the exact same
 # preprocessing code that produced the training volumes.
 PKG = "/kaggle/working/pkg"
-if os.path.isdir(SRC):
-    if not os.path.exists(f"{PKG}/src"):
-        os.makedirs(PKG, exist_ok=True)
-        shutil.copytree(SRC, f"{PKG}/src")
-    sys.path.insert(0, PKG)
+INPUT = "/kaggle/input"
+print("mounted inputs:", sorted(os.listdir(INPUT)) if os.path.isdir(INPUT) else "NONE")
+
+
+def _find_src():
+    """Locate the src dataset by CONTENT, not by name.
+
+    Kaggle mounts a dataset under a directory named from its slug, but that
+    name can differ from what kernel-metadata.json requested (renames, version
+    lag, a dataset attached by hand in the UI). Probing for a file we know is
+    in the package is robust to all of that; hardcoding the path is not.
+    """
+    if not os.path.isdir(INPUT):
+        return None
+    for name in sorted(os.listdir(INPUT)):
+        candidate = os.path.join(INPUT, name)
+        if os.path.isdir(candidate) and os.path.exists(os.path.join(candidate, "labels.py")):
+            return candidate
+    return None
+
+
+_src = _find_src()
+if _src is None:
+    raise SystemExit(
+        "knee-src is not attached to this kernel. "
+        "Fix: notebook sidebar -> + Add Input -> Datasets -> knee-src, "
+        "or verify dataset_sources in kernel-metadata.json."
+    )
+print("using src from:", _src)
+if not os.path.exists(f"{PKG}/src"):
+    os.makedirs(PKG, exist_ok=True)
+    shutil.copytree(_src, f"{PKG}/src")
+sys.path.insert(0, PKG)
 # -------------------------------------------------------------------------
 
 TARGETS = [
