@@ -84,6 +84,48 @@ python -m pytest tests/ -q                          # 34 tests
    structure in other languages (a wildcarded root that's also a substring of the positive form).
    Found three Turkish instances in one sitting; unclear if it's isolated to Turkish.
 
+## Session 9: Phases 2-3 built, ready for Kaggle
+
+**RULES CHANGE — commercial LLMs are now permitted** (host announcement, 2026-08-08). This
+reverses the assumption Phases 1's sessions 4-7 were built on. Full detail and what it changes:
+[08-model-and-rules.md](08-model-and-rules.md). Practical effect: label extraction can now use a
+hosted LLM, but **open-weights-on-Kaggle stays the preferred route** — free, offline, and it
+sidesteps the "minimal cost / reasonably accessible" test the host reserved the right to judge
+after the fact.
+
+Built and unit-tested this session (50 tests passing, up from 40):
+
+| File | What it is |
+|---|---|
+| `src/data/dicom.py` | DICOM → normalized (3, S, H, W) volumes. **Shared by train and inference on purpose** — preprocessing skew is how you score well in CV and badly on the LB |
+| `src/model/net.py` | 2.5D EfficientNetV2-S + gated attention-MIL, 12-way multi-label head |
+| `src/model/validation.py` | Scanner fingerprinting + GroupKFold + macro-AUC |
+| `notebooks/kaggle_01_smoke.py` | 15-min pre-flight: transfer-syntax decode, load timing, plane coverage, one GPU step |
+| `notebooks/kaggle_02_train.py` | Site-grouped CV training, gold studies held out |
+| `notebooks/kaggle_03_submit.py` | Inference → `submission.csv`, degrades to 0.5 rather than crashing |
+
+`data/labels_v1.csv` — all **4,407** studies labelled by the rule extractor. Prevalences pass the
+clinical sanity check (ACL 13.6%, Fracture 6.9%, Effusion 54.9%, Medial Meniscus 40.0%).
+
+**Verified locally, not assumed**: 2.5D triplet construction (correct shape, edges replicate rather
+than wrap, centre channel preserved), attention pooling normalisation, `pos_weight` favouring rare
+labels while staying capped, full forward pass (2,3,16,64,64)→(2,12), **GroupKFold splitting no
+group across folds**, and macro-AUC skipping single-class labels.
+
+### Kaggle run order
+
+1. Upload `src/` as a Kaggle Dataset (`knee-src`) and `data/labels_v1.csv` (`knee-labels`).
+2. Run `kaggle_01_smoke.py` — **read its numbers before anything else.** If a study takes >2s to
+   load, cache to `.npy` and publish as a Dataset before training, or every epoch re-decodes 800k
+   DICOMs and burns the weekly GPU quota on I/O.
+3. Run `kaggle_02_train.py` on fold 0 only. Confirm grouped CV clears **0.598** (the
+   metadata-only floor) — under that, the model isn't reading the images.
+4. Publish `/kaggle/working` as `knee-model-v1`, run `kaggle_03_submit.py`, submit.
+
+`kaggle_03_submit.py` writes a valid constant-0.5 file when no checkpoint is attached, so the
+submission path can be proven end to end **before** the model exists. Worth doing first — it
+converts "does our notebook even produce a scoreable file" from an unknown into a settled question.
+
 ## Immediate next step (session 9 starting point)
 
 Just run this — the reliability fix is in, verified working, nothing else to set up:
