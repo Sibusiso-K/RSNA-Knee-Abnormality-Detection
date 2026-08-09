@@ -86,19 +86,29 @@ sys.path.insert(0, PKG)
 
 
 def find_checkpoint_dir():
-    """Any attached directory holding .pth files.
+    """Any attached DATASET directory holding .pth files.
 
     Checkpoint filenames aren't known ahead of time (one per fold), and the
     model dataset won't exist at all until training has run — so this returns
     None rather than raising, and the constant-0.5 fallback below takes over.
     That is what lets this notebook prove the submission path works *before*
     a model exists.
+
+    Scoped to /kaggle/input/datasets and skips the competition tree
+    deliberately: at scoring time that tree holds the real test set, and this
+    corpus is 819,640 files. Walking all of it to look for a .pth that can only
+    ever live in a dataset would burn minutes of the 9-hour cap for nothing.
     """
-    if not os.path.isdir(INPUT):
-        return None
-    for directory, _dirs, files in os.walk(INPUT):
-        if any(f.endswith(".pth") for f in files):
-            return directory
+    roots = [os.path.join(INPUT, "datasets"), INPUT]
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for directory, dirs, files in os.walk(root):
+            dirs[:] = [d for d in dirs if d != "competitions"]
+            if any(f.endswith(".pth") for f in files):
+                return directory
+        if root.endswith("datasets"):
+            return None  # datasets/ existed and had none — don't rescan
     return None
 
 
