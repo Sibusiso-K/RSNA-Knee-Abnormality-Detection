@@ -18,6 +18,7 @@ degradation can't masquerade as a real result.
 """
 
 import os
+import shutil
 import sys
 import traceback
 
@@ -27,10 +28,20 @@ import torch
 
 COMP = "/kaggle/input/rsna-knee-abnormality-detection"
 CKPT_DIR = "/kaggle/input/knee-model-v1"
-SRC = "/kaggle/input/knee-src"  # optional: repo src/ as a dataset
+SRC = "/kaggle/input/knee-src"
 
+# --- src bootstrap (see kaggle_01_smoke.py for the full explanation) -----
+# Kaggle flattens the uploaded folder, and "knee-src" isn't a legal package
+# name, so rebuild a real `src` package under /kaggle/working. Identical to the
+# training notebook on purpose: inference must import the exact same
+# preprocessing code that produced the training volumes.
+PKG = "/kaggle/working/pkg"
 if os.path.isdir(SRC):
-    sys.path.insert(0, SRC)
+    if not os.path.exists(f"{PKG}/src"):
+        os.makedirs(PKG, exist_ok=True)
+        shutil.copytree(SRC, f"{PKG}/src")
+    sys.path.insert(0, PKG)
+# -------------------------------------------------------------------------
 
 TARGETS = [
     "ACL", "MCL", "Medial Meniscus", "Lateral Meniscus", "Medial OA",

@@ -25,7 +25,22 @@ import numpy as np
 import pandas as pd
 import torch
 
-sys.path.insert(0, "/kaggle/input/knee-src")
+# --- src bootstrap (identical in all three notebooks) --------------------
+# Kaggle flattens the top-level folder of an uploaded dataset, so
+# /kaggle/input/knee-src IS the contents of src/, not a folder containing it.
+# Dataset dirs also can't be imported directly (the "-" in knee-src is not a
+# legal package name). Rebuild a real `src` package under /kaggle/working so
+# `from src.x import y` resolves identically here and locally — matching import
+# paths is what stops train/inference code from quietly diverging.
+import os
+import shutil
+
+PKG = "/kaggle/working/pkg"
+if not os.path.exists(f"{PKG}/src"):
+    os.makedirs(PKG, exist_ok=True)
+    shutil.copytree("/kaggle/input/knee-src", f"{PKG}/src")
+sys.path.insert(0, PKG)
+# -------------------------------------------------------------------------
 
 from src.data.dicom import PLANES, load_study, pick_series  # noqa: E402
 

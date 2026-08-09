@@ -30,7 +30,18 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-sys.path.insert(0, "/kaggle/input/knee-src")
+# --- src bootstrap (see kaggle_01_smoke.py for the full explanation) -----
+# Kaggle flattens the uploaded folder, and "knee-src" isn't a legal package
+# name, so rebuild a real `src` package under /kaggle/working.
+import os
+import shutil
+
+PKG = "/kaggle/working/pkg"
+if not os.path.exists(f"{PKG}/src"):
+    os.makedirs(PKG, exist_ok=True)
+    shutil.copytree("/kaggle/input/knee-src", f"{PKG}/src")
+sys.path.insert(0, PKG)
+# -------------------------------------------------------------------------
 
 from src.data.dicom import load_study                        # noqa: E402
 from src.labels import TARGETS                                # noqa: E402
