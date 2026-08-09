@@ -35,6 +35,35 @@ FINGERPRINT_TAGS = (
 )
 
 
+def _clean_tag(tag: str, value) -> str:
+    """Normalise one tag value into a stable, coarse string.
+
+    `ImagingFrequency` needs special handling and it is the whole reason this
+    function exists. It is the Larmor frequency in MHz (~63.9 at 1.5 T, ~127.7
+    at 3 T) and it **drifts in the decimals between scanning sessions on the
+    same physical magnet**. Used raw it is effectively a per-study nonce: the
+    first real run produced **3,229 distinct fingerprints across 4,349
+    studies** — nearly one group per study, which silently reduces GroupKFold
+    to random KFold and reinstates exactly the ~0.053 AUC of site leakage the
+    grouping exists to prevent.
+
+    Rounding to whole MHz keeps the distinction that matters (1.5 T vs 3 T,
+    and different magnets) while collapsing session-to-session drift.
+    """
+    if value is None:
+        return ""
+    if tag == "ImagingFrequency":
+        try:
+            return str(int(round(float(value))))
+        except (TypeError, ValueError):
+            return ""
+    # SoftwareVersions is often multi-valued; str() of a pydicom MultiValue is
+    # order-sensitive, so join explicitly for stability.
+    if isinstance(value, (list, tuple)) or type(value).__name__ == "MultiValue":
+        return ",".join(str(v).strip() for v in value)
+    return str(value).strip()
+
+
 def study_fingerprint(root: Path | str, study_uid: str, series_uid: str) -> str:
     """Scanner fingerprint for one study, read from a single slice header.
 
@@ -49,11 +78,9 @@ def study_fingerprint(root: Path | str, study_uid: str, series_uid: str) -> str:
             ds = pydicom.dcmread(str(dcm_path), stop_before_pixels=True)
         except Exception:
             continue
-        parts = []
-        for tag in FINGERPRINT_TAGS:
-            value = getattr(ds, tag, "")
-            parts.append(str(value).strip() if value is not None else "")
-        return "|".join(parts)
+        return "|".join(
+            _clean_tag(tag, getattr(ds, tag, "")) for tag in FINGERPRINT_TAGS
+        )
     return "unknown"
 
 
@@ -69,6 +96,38 @@ def build_fingerprints(root: Path | str, series_meta, studies) -> dict[str, str]
             root, study_uid, str(rows.iloc[0]["SeriesInstanceUID"])
         )
     return fingerprints
+
+
+def check_grouping(groups, warn_ratio: float = 0.25) -> dict:
+    """Fail loudly when the grouping key is too fine to protect anything.
+
+    A fingerprint approaching one-group-per-study makes GroupKFold identical to
+    random KFold while still *looking* rigorous — the worst kind of bug,
+    because every downstream number stays plausible. This is a tripwire for
+    that, added after `ImagingFrequency` drift produced 3,229 groups over 4,349
+    studies on the first real run.
+    """
+    groups = np.asarray(groups)
+    _, counts = np.unique(groups, return_counts=True)
+    stats = {
+        "n_studies": int(len(groups)),
+        "n_groups": int(len(counts)),
+        "ratio": float(len(counts) / max(len(groups), 1)),
+        "largest": sorted(counts.tolist(), reverse=True)[:10],
+        "singletons": int((counts == 1).sum()),
+    }
+    print(
+        f"  grouping: {stats['n_groups']} groups / {stats['n_studies']} studies "
+        f"(ratio {stats['ratio']:.2f}), singletons {stats['singletons']}, "
+        f"largest {stats['largest'][:5]}"
+    )
+    if stats["ratio"] > warn_ratio:
+        print(
+            "  *** WARNING: grouping key is near-unique per study. GroupKFold "
+            "is providing little or no protection here — treat any CV number "
+            "from this run as OPTIMISTIC (random-fold equivalent). ***"
+        )
+    return stats
 
 
 def grouped_folds(groups, n_splits: int = 5, seed: int = 42) -> np.ndarray:
@@ -89,8 +148,15 @@ def grouped_folds(groups, n_splits: int = 5, seed: int = 42) -> np.ndarray:
     return folds
 
 
-def macro_auc(y_true, y_pred) -> tuple[float, dict[str, float]]:
+def macro_auc(y_true, y_pred, threshold: float = 0.5) -> tuple[float, dict[str, float]]:
     """Competition metric: unweighted mean AUC over the twelve labels.
+
+    `y_true` is **binarised at `threshold`** before scoring. Our training
+    targets are deliberately soft (a hedged "possible tear" scores ~0.6 — see
+    docs/04-method.md), and `roc_auc_score` rejects continuous ground truth
+    outright with "continuous format is not supported". The real competition
+    labels are binary, so thresholding is what makes this CV number comparable
+    to the leaderboard rather than a different metric wearing the same name.
 
     Labels with only one class present in a fold are skipped rather than
     scored 0.5 — on rare labels a fold can genuinely contain no positives, and
@@ -100,11 +166,11 @@ def macro_auc(y_true, y_pred) -> tuple[float, dict[str, float]]:
 
     from src.labels import TARGETS
 
-    y_true = np.asarray(y_true)
-    y_pred = np.asarray(y_pred)
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
     per_label: dict[str, float] = {}
     for i, label in enumerate(TARGETS):
-        column = y_true[:, i]
+        column = (y_true[:, i] >= threshold).astype(int)
         if len(np.unique(column)) < 2:
             continue
         per_label[label] = float(roc_auc_score(column, y_pred[:, i]))

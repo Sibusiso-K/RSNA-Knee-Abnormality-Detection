@@ -92,7 +92,12 @@ sys.path.insert(0, PKG)
 from src.data.dicom import load_study                        # noqa: E402
 from src.labels import TARGETS                                # noqa: E402
 from src.model.net import KneeNet, positive_weights           # noqa: E402
-from src.model.validation import build_fingerprints, grouped_folds, macro_auc  # noqa: E402
+from src.model.validation import (  # noqa: E402
+    build_fingerprints,
+    check_grouping,
+    grouped_folds,
+    macro_auc,
+)
 
 LABELS = os.path.join(find_dir("labels_v1.csv") or "", "labels_v1.csv")
 ID = "StudyInstanceUID"
@@ -124,6 +129,9 @@ t0 = time.time()
 fingerprints = build_fingerprints(f"{COMP}/train_series", series, data[ID].tolist())
 groups = data[ID].map(fingerprints).fillna("unknown").values
 print(f"  {len(set(groups))} distinct fingerprints in {time.time() - t0:.0f}s")
+# Tripwire: a near-unique grouping key silently degrades GroupKFold to random
+# KFold. Print this BEFORE spending GPU hours on a number that would be a lie.
+check_grouping(groups)
 
 data["fold"] = grouped_folds(groups, n_splits=N_FOLDS)
 print(data["fold"].value_counts().sort_index().to_dict())

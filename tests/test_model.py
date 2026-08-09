@@ -130,3 +130,64 @@ def test_macro_auc_skips_single_class_labels():
     macro, per_label = macro_auc(truth, pred)
     assert list(per_label) == ["ACL"]
     assert macro == pytest.approx(1.0)
+
+
+# -- regressions from the first real Kaggle training run -----------------
+
+def test_macro_auc_accepts_soft_labels():
+    """Training targets are soft (0.6 for a hedged finding). sklearn rejects
+    continuous y_true outright -- this crashed fold 0 after a full epoch."""
+    truth = np.zeros((40, 12))
+    truth[:20, 0] = 0.92          # affirmed-in-findings score, not 1.0
+    truth[20:25, 0] = 0.6         # hedged
+    pred = np.random.rand(40, 12)
+    pred[:20, 0] += 1.0
+    macro, per_label = macro_auc(truth, pred)
+    assert "ACL" in per_label
+    assert 0.0 <= macro <= 1.0
+
+
+def test_macro_auc_threshold_splits_hedged_labels():
+    truth = np.array([[0.6] * 12, [0.0] * 12, [0.6] * 12, [0.0] * 12])
+    pred = np.array([[0.9] * 12, [0.1] * 12, [0.8] * 12, [0.2] * 12])
+    _, per_low = macro_auc(truth, pred, threshold=0.5)
+    assert per_low["ACL"] == pytest.approx(1.0)   # 0.6 counts as positive
+    _, per_high = macro_auc(truth, pred, threshold=0.7)
+    assert per_high == {}                          # 0.6 now negative -> one class
+
+
+def test_check_grouping_flags_near_unique_key(capsys):
+    """The ImagingFrequency bug: 3,229 groups over 4,349 studies made
+    GroupKFold equivalent to random KFold while still looking rigorous."""
+    from src.model.validation import check_grouping
+
+    stats = check_grouping([f"g{i}" for i in range(100)])
+    assert stats["ratio"] == 1.0
+    assert "WARNING" in capsys.readouterr().out
+
+
+def test_check_grouping_quiet_for_coarse_key(capsys):
+    from src.model.validation import check_grouping
+
+    stats = check_grouping([f"s{i % 5}" for i in range(100)])
+    assert stats["n_groups"] == 5
+    assert "WARNING" not in capsys.readouterr().out
+
+
+def test_clean_tag_collapses_imaging_frequency_drift():
+    """Same magnet, different sessions -> same group."""
+    from src.model.validation import _clean_tag
+
+    a = _clean_tag("ImagingFrequency", "63.8721")
+    b = _clean_tag("ImagingFrequency", "63.8934")
+    c = _clean_tag("ImagingFrequency", "127.7312")
+    assert a == b            # session drift collapsed
+    assert a != c            # 1.5T vs 3T still distinguished
+    assert _clean_tag("ImagingFrequency", None) == ""
+    assert _clean_tag("ImagingFrequency", "n/a") == ""
+
+
+def test_clean_tag_handles_multivalued_software_versions():
+    from src.model.validation import _clean_tag
+
+    assert _clean_tag("SoftwareVersions", ["syngo MR", "E11"]) == "syngo MR,E11"
