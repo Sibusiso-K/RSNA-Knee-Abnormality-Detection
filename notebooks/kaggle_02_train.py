@@ -98,7 +98,11 @@ LABELS = os.path.join(find_dir("labels_v1.csv") or "", "labels_v1.csv")
 ID = "StudyInstanceUID"
 
 N_SLICES, SIZE = 16, 224
-BATCH, EPOCHS, LR = 4, 4, 3e-4
+# BATCH=2, not 4: the smoke test measured 7.7 GB peak on a T4 (~15 GB usable)
+# for a batch of 2 including the backward pass. Batch 4 would sit right on the
+# ceiling and OOM partway through an epoch — the expensive way to find out.
+# Gradient accumulation recovers the effective batch size for free.
+BATCH, ACCUM, EPOCHS, LR = 2, 4, 4, 3e-4   # effective batch = 8
 N_FOLDS, TRAIN_FOLDS = 5, [0]      # widen once one fold's timing is known
 BACKBONE = "tf_efficientnetv2_s.in21k_ft_in1k"
 
@@ -171,8 +175,12 @@ def run_fold(fold: int) -> float:
         pos_weight=positive_weights(train_df[TARGETS].values).to(device)
     )
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR, weight_decay=1e-2)
+    # total_steps counts OPTIMISER steps, not batches — with accumulation those
+    # differ by ACCUM. Getting this wrong makes OneCycleLR run off the end of
+    # its schedule mid-training and raise.
+    steps_per_epoch = max(1, len(train_loader) // ACCUM)
     scheduler = torch.optim.lr_scheduler.OneCycleLR(
-        optimizer, max_lr=LR, total_steps=EPOCHS * len(train_loader)
+        optimizer, max_lr=LR, total_steps=EPOCHS * steps_per_epoch + EPOCHS
     )
     scaler = torch.cuda.amp.GradScaler()
 
@@ -180,18 +188,28 @@ def run_fold(fold: int) -> float:
     for epoch in range(EPOCHS):
         model.train()
         t0, total = time.time(), 0.0
+        optimizer.zero_grad(set_to_none=True)
         for step, (x, y) in enumerate(train_loader):
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-            optimizer.zero_grad(set_to_none=True)
             with torch.cuda.amp.autocast():
-                loss = criterion(model(x), y)
+                # Scale by ACCUM so accumulated gradients average rather than
+                # sum — otherwise the effective LR is ACCUM times too large.
+                loss = criterion(model(x), y) / ACCUM
             scaler.scale(loss).backward()
+            if (step + 1) % ACCUM != 0:
+                total += loss.item() * ACCUM
+                continue
             scaler.step(optimizer)
             scaler.update()
             scheduler.step()
-            total += loss.item()
-            if step % 50 == 0:
-                print(f"  e{epoch} s{step}/{len(train_loader)} loss {loss.item():.4f}", flush=True)
+            optimizer.zero_grad(set_to_none=True)
+            total += loss.item() * ACCUM
+            if step % 100 == 0:
+                print(
+                    f"  e{epoch} s{step}/{len(train_loader)} "
+                    f"loss {loss.item() * ACCUM:.4f}",
+                    flush=True,
+                )
 
         model.eval()
         preds, truths = [], []
