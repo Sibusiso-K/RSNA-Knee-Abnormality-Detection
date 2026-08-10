@@ -101,21 +101,49 @@ print(format_report(rule_reports, rule_macro))
 
 # --- load the LLM --------------------------------------------------------
 print(f"\n--- loading {MODEL} ---", flush=True)
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig  # noqa: E402
+import subprocess  # noqa: E402
 
+from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
+
+# bitsandbytes is NOT in the Kaggle image (measured — the first run died on
+# exactly this). Install it, but treat 4-bit as best-effort rather than a hard
+# requirement: a pip failure or a CUDA mismatch should cost us model size, not
+# the whole run. FALLBACK is 3B in fp16 (~6 GB), which fits a T4 unquantised;
+# 7B fp16 would be ~15 GB of 15 and OOM during generation.
+FALLBACK = "Qwen/Qwen2.5-3B-Instruct"
 t0 = time.time()
-tokenizer = AutoTokenizer.from_pretrained(MODEL, padding_side="left")
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL,
-    quantization_config=BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_quant_type="nf4",
-    ),
-    device_map="auto",
-)
+model = None
+
+try:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "-U", "bitsandbytes>=0.46.1"],
+        check=True, timeout=600,
+    )
+    from transformers import BitsAndBytesConfig
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL, padding_side="left")
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL,
+        quantization_config=BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_quant_type="nf4",
+        ),
+        device_map="auto",
+    )
+    print(f"  loaded {MODEL} in 4-bit")
+except Exception as exc:
+    print(f"  4-bit path unavailable ({type(exc).__name__}: {exc})")
+    print(f"  falling back to {FALLBACK} in fp16")
+    MODEL = FALLBACK
+    tokenizer = AutoTokenizer.from_pretrained(MODEL, padding_side="left")
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL, torch_dtype=torch.float16, device_map="auto"
+    )
+
 model.eval()
-print(f"  loaded in {time.time() - t0:.0f}s")
+print(f"  loaded in {time.time() - t0:.0f}s | "
+      f"GPU mem {torch.cuda.memory_allocated() / 1e9:.1f} GB")
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
