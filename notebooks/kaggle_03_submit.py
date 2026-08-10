@@ -94,26 +94,49 @@ def find_checkpoint_dir():
     That is what lets this notebook prove the submission path works *before*
     a model exists.
 
-    Scoped to /kaggle/input/datasets and skips the competition tree
-    deliberately: at scoring time that tree holds the real test set, and this
-    corpus is 819,640 files. Walking all of it to look for a .pth that can only
-    ever live in a dataset would burn minutes of the 9-hour cap for nothing.
+    Walks all of /kaggle/input but PRUNES the competition tree: at scoring time
+    that holds the real test set (819,640 files in this corpus), and a .pth can
+    never live there, so descending would burn minutes of the 9-hour cap.
+
+    Do NOT "optimise" this by scanning only /kaggle/input/datasets and
+    returning early. Kaggle mounts datasets INCONSISTENTLY — measured on one
+    single run:
+        /kaggle/input/datasets/sibusisokhumalo11/knee-src   (nested)
+        /kaggle/input/knee-model-v1                          (flat)
+    An earlier version did exactly that early return and silently found no
+    checkpoint, so the submission degraded to constant-0.5 while still writing
+    a valid, scoreable file — a failure that is invisible unless you read the
+    log.
     """
-    roots = [os.path.join(INPUT, "datasets"), INPUT]
-    for root in roots:
-        if not os.path.isdir(root):
-            continue
-        for directory, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if d != "competitions"]
-            if any(f.endswith(".pth") for f in files):
-                return directory
-        if root.endswith("datasets"):
-            return None  # datasets/ existed and had none — don't rescan
+    if not os.path.isdir(INPUT):
+        return None
+    for directory, dirs, files in os.walk(INPUT):
+        dirs[:] = [d for d in dirs if d != "competitions"]
+        if any(f.endswith(".pth") for f in files):
+            return directory
     return None
 
 
 CKPT_DIR = find_checkpoint_dir()
 print("  ckpt:", CKPT_DIR)
+if CKPT_DIR is None:
+    # A missing checkpoint silently degrades the run to constant-0.5, which
+    # still scores and so can pass unnoticed. Dump what IS mounted so the cause
+    # is visible in one run instead of costing another round trip.
+    print("  ckpt not found — listing /kaggle/input two levels deep:")
+    for _root in (INPUT, os.path.join(INPUT, "datasets")):
+        if not os.path.isdir(_root):
+            continue
+        for _name in sorted(os.listdir(_root)):
+            _p = os.path.join(_root, _name)
+            print(f"    {_p}")
+            if os.path.isdir(_p):
+                for _sub in sorted(os.listdir(_p))[:6]:
+                    _sp = os.path.join(_p, _sub)
+                    print(f"      {_sub}{'/' if os.path.isdir(_sp) else ''}")
+                    if os.path.isdir(_sp):
+                        for _f in sorted(os.listdir(_sp))[:6]:
+                            print(f"        {_f}")
 # -------------------------------------------------------------------------
 
 TARGETS = [
@@ -135,7 +158,14 @@ for label in TARGETS:
 
 def _write_and_exit(reason: str) -> None:
     submission.to_csv("submission.csv", index=False)
-    print(f"WROTE FALLBACK submission.csv ({reason}) — shape {submission.shape}")
+    # Shout. A fallback writes a perfectly valid file that scores 0.500, so
+    # without a banner it is indistinguishable from a real run in a glanced-at
+    # log — and submitting it wastes a daily slot on a constant baseline.
+    print("\n" + "!" * 70)
+    print(f"!!! FALLBACK SUBMISSION — NOT A REAL MODEL PREDICTION ({reason})")
+    print("!!! This file will score ~0.500. Do NOT submit it as a model result.")
+    print("!" * 70 + "\n")
+    print(f"wrote submission.csv — shape {submission.shape}")
 
 
 checkpoints = []

@@ -191,3 +191,71 @@ def test_clean_tag_handles_multivalued_software_versions():
     from src.model.validation import _clean_tag
 
     assert _clean_tag("SoftwareVersions", ["syngo MR", "E11"]) == "syngo MR,E11"
+
+
+# -- checkpoint discovery (regression: silent constant-0.5 submission) ----
+
+def _find_checkpoint_dir(input_root):
+    """Mirror of find_checkpoint_dir() in notebooks/kaggle_03_submit.py.
+
+    Duplicated because the notebook is a standalone Kaggle script and cannot
+    import from src/. If you change one, change both.
+    """
+    import os
+
+    if not os.path.isdir(input_root):
+        return None
+    for directory, dirs, files in os.walk(input_root):
+        dirs[:] = [d for d in dirs if d != "competitions"]
+        if any(f.endswith(".pth") for f in files):
+            return directory
+    return None
+
+
+def test_checkpoint_found_at_flat_mount(tmp_path):
+    """Kaggle mounts datasets inconsistently: measured on ONE run, knee-src
+    landed at input/datasets/<owner>/<name> while knee-model-v1 landed flat at
+    input/<name>. An earlier version scanned only datasets/ and returned early,
+    so the model was never found and the submission silently degraded to
+    constant-0.5 while still writing a valid file."""
+    (tmp_path / "datasets" / "owner" / "knee-src").mkdir(parents=True)
+    (tmp_path / "datasets" / "owner" / "knee-src" / "labels.py").touch()
+    (tmp_path / "knee-model-v1").mkdir()
+    (tmp_path / "knee-model-v1" / "knee_fold0.pth").touch()
+
+    found = _find_checkpoint_dir(str(tmp_path))
+    assert found is not None and found.endswith("knee-model-v1")
+
+
+def test_checkpoint_found_at_nested_mount(tmp_path):
+    (tmp_path / "datasets" / "owner" / "knee-model-v1").mkdir(parents=True)
+    (tmp_path / "datasets" / "owner" / "knee-model-v1" / "f0.pth").touch()
+    assert _find_checkpoint_dir(str(tmp_path)) is not None
+
+
+def test_checkpoint_search_never_descends_into_competitions(tmp_path, monkeypatch):
+    """The competition tree is 819,640 files at scoring time and can never
+    contain a .pth — descending it would burn minutes of the 9-hour cap."""
+    import os
+
+    comp = tmp_path / "competitions" / "rsna" / "train_series"
+    comp.mkdir(parents=True)
+    (tmp_path / "knee-model-v1").mkdir()
+    (tmp_path / "knee-model-v1" / "f0.pth").touch()
+
+    visited = []
+    real_walk = os.walk
+
+    def spy(path, *a, **k):
+        for entry in real_walk(path, *a, **k):
+            visited.append(entry[0])
+            yield entry
+
+    monkeypatch.setattr(os, "walk", spy)
+    assert _find_checkpoint_dir(str(tmp_path)) is not None
+    assert not any("competitions" in v for v in visited)
+
+
+def test_no_checkpoint_returns_none(tmp_path):
+    (tmp_path / "datasets").mkdir()
+    assert _find_checkpoint_dir(str(tmp_path)) is None
