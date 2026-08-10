@@ -8,10 +8,10 @@
 
 > ✅ **`knee-train-8ep` collected** — 8 epochs is not better than 4, see below.
 > ✅ **First leaderboard submission made — 0.783**, and CV transfers.
-> ⏳ **`knee-llm-labels` v3 still RUNNING** (started 09:13 UTC, 12 h ceiling ≈ 21:13 UTC).
-> It writes `labels_ensemble_v1.csv` only after all 4,407 studies finish, so a timeout
-> loses the whole run. **v3 is running the pre-sharding code** — the chunked/sharded
-> rewrite in `kaggle_04_llm_labels.py` protects the *next* attempt, not this one.
+> ❌ **`knee-llm-labels` v3 FAILED** after ~7.5 h — status `ERROR`, and its Kaggle log came
+> back **0 bytes**, so there is no stack trace. No `labels_llm_v1.csv`, no
+> `labels_ensemble_v1.csv`: the full-corpus stage produced nothing. **We still have no
+> ensemble labels for the corpus.** Relaunch with the sharded rewrite.
 **Days to final submission (2026-10-22):** ~73
 
 ---

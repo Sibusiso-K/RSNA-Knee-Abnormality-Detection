@@ -96,10 +96,18 @@ BATCH = 4
 
 # --- sharding: why this exists ------------------------------------------
 # The first full-corpus run wrote labels_ensemble_v1.csv only after all 4,407
-# studies finished, so a 12 h timeout would have cost the entire ~6 GPU-hour
-# run. Chunked writes alone do NOT fix that: **Kaggle commits /kaggle/working
-# only when a kernel completes**, so a killed run takes its partial files with
-# it. The fix that actually holds is to make each run small enough to finish:
+# studies finished. On 2026-08-10 that run died at ~7.5 h with status ERROR and
+# a 0-byte log, and it cost the entire corpus pass.
+#
+# MEASURED, and it corrects an earlier assumption written here: that failed run
+# **did** commit its /kaggle/working files (llm_run_info.txt and
+# llm_scores_gold.csv both came back). So on an *exception* Kaggle still
+# commits, and chunked writes alone would have saved most of the corpus. It is
+# only a hard timeout/kill where partials are lost. Both mechanisms below earn
+# their place: CHUNK flushing survives the error case that actually happened,
+# sharding bounds runtime so the timeout case cannot arise.
+#
+# The fix that holds is to make each run small enough to finish:
 # shard the corpus, run each shard as its own kernel, publish each partial as
 # a private Dataset, and let later shards resume past whatever is already done.
 #
