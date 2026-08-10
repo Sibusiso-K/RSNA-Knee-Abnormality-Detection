@@ -4,7 +4,11 @@
 > Every other doc explains something stable; this one changes constantly.
 > **Update it at the end of every working session.** If it's stale, everything else is a trap.
 
-**Last updated:** 2026-08-10
+**Last updated:** 2026-08-10 (handover — see [09-handover.md](09-handover.md))
+
+> ⚠️ **Two kernels were still running at handover** and their results are not recorded
+> anywhere: `knee-train-8ep` (8 epochs) and `knee-llm-labels` (full-corpus ensemble
+> labels). Collect them first — see §4 of the handover doc.
 **Days to final submission (2026-10-22):** ~73
 
 ---

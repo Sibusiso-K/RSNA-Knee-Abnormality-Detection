@@ -114,15 +114,40 @@ kaggle kernels output sibusisokhumalo11/<name> -p out/
 
 ---
 
-## 4. What was running when this was written
+## 4. TWO KERNELS WERE STILL RUNNING AT HANDOVER — check these first
 
-| Kernel | What | Watch for |
-|---|---|---|
-| `knee-train-8ep` | 8 epochs, fold 0, rule-only labels | Should beat 0.7746 — fold 0 was still improving |
-| `knee-llm-labels` v3 | LLM-labels all 4,407 studies, emits `labels_ensemble_v1.csv` | ⚠️ Writes output **only at the end** — a 12h timeout loses everything |
+Both were `RUNNING` at 13:55 UTC on 2026-08-10 and their results are **not in this document**.
+**Step one for whoever picks this up is to collect them.**
+
+```bash
+kaggle kernels status sibusisokhumalo11/knee-train-8ep
+kaggle kernels status sibusisokhumalo11/knee-llm-labels
+kaggle kernels output sibusisokhumalo11/<name> -p out/
+```
+
+| Kernel | What | Started | Watch for |
+|---|---|---|---|
+| `knee-train-8ep` | 8 epochs, fold 0, **rule-only** labels | ~05:30 UTC | Should beat 0.7746 — fold 0 was still improving at epoch 3. Checkpoint saves on every improvement, so **a timeout still leaves the best epoch** |
+| `knee-llm-labels` v3 | LLM-labels all 4,407 studies → `labels_ensemble_v1.csv` | ~08:50 UTC | ⚠️ Writes output **only after all 4,407 finish** — a timeout loses the entire run |
+
+Kaggle's kernel ceiling is **12 h**. `knee-train-8ep` was ~8.3 h in and past its ~7.8 h estimate
+(queue time and validation passes were not in that figure).
 
 **If `knee-llm-labels` timed out**, rebuild it with chunked writes and resume rather than retrying
-the same all-or-nothing pattern. That failure mode already cost a local run 14/58 studies of work.
+the same all-or-nothing pattern. That exact failure mode already cost a local run 14/58 studies of
+work, and repeating it here would cost ~6 GPU-hours.
+
+**If it succeeded**, download `labels_ensemble_v1.csv`, publish it as a **private** Kaggle Dataset,
+and go straight to next action #1 — `kaggle_02_train.py` already prefers it automatically.
+
+### Also unfinished
+
+- **Nothing has ever been submitted to the leaderboard.** Zero submission slots used.
+- The Kaggle MCP server (`.mcp.json`, tokenless OAuth) was configured but **never loaded** — it
+  needs a Claude Code restart from the directory containing `.mcp.json`, then its `authorize` tool.
+- The LLM-vs-rule comparison used a model whose identity is **unrecorded** (that run's Kaggle log
+  came back 0 bytes). The scores are real and were re-verified locally against gold; the model
+  behind them is not known. `llm_run_info.txt` now prevents a repeat.
 
 ---
 
