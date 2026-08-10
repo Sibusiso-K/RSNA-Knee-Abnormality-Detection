@@ -73,9 +73,42 @@ medial/lateral compartment OA; axial for PF OA and synovitis. Fluid-sensitive se
 
 ## Efficiency track
 
-`Efficiency = (AUC_benchmark − max_AUC) + RuntimeSeconds / 32400`, minimised. Eligible if ranked
-above the `sample_submission.csv` benchmark on the private LB. A submission can win both tracks.
-Given a crowded main LB, this is the more winnable track for a small team.
+**Verified against the host's Efficiency Prize Evaluation page on 2026-08-10.** The formula
+previously recorded here — `(AUC_benchmark − max_AUC) + RuntimeSeconds / 32400` — **was wrong**, and
+wrong in a way that mattered: it contains no term for *our own* AUC, so it implied the score was
+purely a runtime race once we cleared the benchmark gate. It is not.
+
+```
+Efficiency = AUC / (Benchmark − max_AUC)  +  RuntimeSeconds / 32400     (minimised)
+```
+
+- `AUC` — our score on the main metric.
+- `Benchmark` — the `sample_submission.csv` score (a constant submission, so ≈ 0.5).
+- `max_AUC` — the best AUC of *any* team on the private LB (≈ 0.95 today).
+- `32400` s = the 9 h notebook cap.
+
+`Benchmark − max_AUC` is **negative** (≈ −0.45), so dividing by it is what makes a *higher* AUC
+*lower* the score. The two terms trade off at roughly:
+
+| Change | Effect on efficiency score |
+|---|---|
+| +0.045 AUC | −0.10 |
+| −1 hour runtime | −0.111 |
+
+**So ~0.045 AUC is worth about one hour of runtime.** Our inference is ~0.2 h against the 9 h cap,
+contributing only ~0.022 — already near the floor. **Essentially all remaining leverage in this
+track is AUC, not speed.** Shaving runtime further is close to worthless; the track is winnable for
+a small team because it is less crowded, not because we can out-optimise runtime.
+
+**`RuntimeSeconds` is full notebook wall time** — Kaggle staff (Ryan Holbrook,
+[discussion 733475](https://www.kaggle.com/competitions/rsna-knee-abnormality-detection/discussion/733475))
+confirmed it runs from start to end of execution and *includes* pip installs, model loading and
+DICOM reads. **GPU notebooks are eligible** — the track is not CPU-only.
+
+Eligible if ranked above the `sample_submission.csv` benchmark on the private LB, and the submission
+must be one the team selected for the main prize. A submission can win both tracks. A public-data
+efficiency leaderboard (rank only, no scores) is published daily at
+[ryanholbrook/rsna-knee-abnormalities-efficiency-lb](https://www.kaggle.com/code/ryanholbrook/rsna-knee-abnormalities-efficiency-lb).
 
 ## Environment constraints (this machine)
 

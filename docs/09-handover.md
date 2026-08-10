@@ -167,11 +167,20 @@ and go straight to next action #1 — `kaggle_02_train.py` already prefers it au
    test set — genuinely worth a slot even on the weaker model.
 3. **Train remaining folds** (1–4) once epoch count and labels are settled. 5 folds × ~4–8 h is
    most of a weekly quota, so don't spend it on a configuration still in flux.
-4. **Efficiency track.** `Efficiency = (AUC_benchmark − max_AUC) + RuntimeSeconds/32400`,
-   minimised. Inference measured at **~0.2 h against a 9 h cap** — enormous headroom, and the
-   track is far less crowded than the main leaderboard. Verify the formula reading against the
-   host's clarification thread first (flagged unresolved in
-   [08-model-and-rules.md](08-model-and-rules.md)).
+4. **Efficiency track.** ✅ **Formula verified 2026-08-10 against the host's Efficiency Prize
+   Evaluation page — and the reading recorded here was wrong.** It is
+   `Efficiency = AUC / (Benchmark − max_AUC) + RuntimeSeconds/32400`, minimised. The old version
+   had no term for our own AUC, which wrongly implied a pure runtime race. Full working in
+   [01-competition.md](01-competition.md#efficiency-track).
+
+   The practical consequence **inverts the old plan**: ~0.045 AUC is worth about one hour of
+   runtime, and at ~0.2 h we already sit near the floor of the runtime term (~0.022 of the score).
+   **Optimising runtime further is close to worthless — this track is won on AUC.** It remains
+   attractive only because it is less crowded.
+
+   ⚠️ Kaggle staff confirmed `RuntimeSeconds` is **full notebook wall time including pip installs,
+   model loading and DICOM reads**. Our ~0.2 h figure measured inference; confirm it covers setup
+   too before quoting it. GPU notebooks are eligible.
 5. **Meniscus labels are the weakest imaging pair** (0.702 / 0.695). The domain primer predicted
    this: a tear spanning ~3 slices of 16 is the hardest thing in the dataset. More slices
    (`N_SLICES`) or higher resolution is the obvious lever, at a runtime cost.
