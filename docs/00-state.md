@@ -4,34 +4,40 @@
 > Every other doc explains something stable; this one changes constantly.
 > **Update it at the end of every working session.** If it's stale, everything else is a trap.
 
-**Last updated:** 2026-08-08
-**Days to final submission (2026-10-22):** ~75
+**Last updated:** 2026-08-10
+**Days to final submission (2026-10-22):** ~73
 
 ---
 
 ## Where we are right now
 
-**Phase 0 — Access: done.** Data is downloaded and the extractor has run against real reports.
-**Phase 1 — Label extraction: 0.757 macro AUC vs the gold studies**, up from 0.685 at first contact.
+| Phase | Status |
+|---|---|
+| 0 — Access | ✅ Done |
+| 1 — Labels from reports | ✅ Rule extractor **0.757** vs gold. LLM extractor built, not yet benchmarked |
+| 2 — Site-grouped CV | ✅ Done and **verified honest** (151 groups / 4,349 studies) |
+| 3 — Imaging model | ✅ **Fold 0 trained: 0.7746 grouped-CV macro AUC** |
+| 4 — Submission | ✅ Pipeline produces real predictions. **Not yet submitted to the leaderboard** |
 
-The rule-based extractor now understands report *structure*, not just sentences: it parses
-templated section headers (`Medial Meniscus:`, `Medial Compartment:`), inherits concept and
-laterality from them when a sentence is bare ("Tear of the posterior horn."), and excludes
-referral-question / technique sections that would otherwise manufacture false positives. It also
-covers **Greek**, ~7% of the corpus and previously invisible entirely. 34 unit tests pass. No
-imaging model exists yet. No submission has been made.
+**Trained model exists and works.** `knee-model-v1` (fold 0, EfficientNetV2-S 2.5D +
+attention-MIL) scores **0.7746** under honest site-grouped CV — well clear of the 0.598
+metadata-only floor, so it is reading images, not memorising scanners.
+
+**In flight:** `knee-train-8ep` (8 epochs, fold 0) — fold 0 was still improving at epoch 3, so this
+is unfinished training rather than a plateau.
+
+**Nothing has been submitted to the leaderboard yet.** `submission.csv` is generated and validated;
+clicking Submit is a human action and consumes one of the daily slots.
 
 ### What runs today
 
 ```bash
-python scripts/extract_labels.py --evaluate       # score against the 58 gold studies
-python scripts/extract_labels.py --audit 30        # read real extractions
-python scripts/extract_labels.py --disagree        # dump conflicts with report text
-python scripts/extract_labels.py --demo             # synthetic sanity check, no data needed
-python -m pytest tests/ -q                          # 34 tests
+python scripts/extract_labels.py --evaluate        # rule extractor vs the 58 gold studies
+python -m pytest tests/ -q                          # 60 tests
+kaggle kernels push -p . --accelerator NvidiaTeslaT4
 ```
 
-## The next three actions, in order
+## Older next-actions (Phase 1 text extraction — superseded by the imaging work above)
 
 1. **Effusion and Synovitis were chased in session 7 — no safe fix found, and that's the right
    outcome, not a stall.** Verified one Effusion false positive directly against the raw CSV: the
