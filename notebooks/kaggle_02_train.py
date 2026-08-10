@@ -99,7 +99,24 @@ from src.model.validation import (  # noqa: E402
     macro_auc,
 )
 
-LABELS = os.path.join(find_dir("labels_v1.csv") or "", "labels_v1.csv")
+# Prefer ensemble labels when attached. Measured on the 58 gold studies
+# (session 13): rule-only 0.7565, LLM-only 0.7806, **ensemble mean 0.8234**.
+# Session 11 established label noise — not model capacity — is the binding
+# constraint, so training against the better labels is the highest-value
+# change available. Falls back to rule-only so the notebook still runs if the
+# ensemble dataset isn't attached.
+LABEL_CANDIDATES = ("labels_ensemble_v1.csv", "labels_v1.csv")
+LABELS = None
+for _candidate in LABEL_CANDIDATES:
+    _dir = find_dir(_candidate)
+    if _dir:
+        LABELS = os.path.join(_dir, _candidate)
+        break
+if LABELS is None:
+    raise SystemExit(f"No label file found. Attach one of: {LABEL_CANDIDATES}")
+# Print it: a run whose label source is ambiguous cannot be compared against
+# another run, and this is the variable we are deliberately changing.
+print(f"LABELS: {LABELS}")
 ID = "StudyInstanceUID"
 
 N_SLICES, SIZE = 16, 224
@@ -242,8 +259,18 @@ def run_fold(fold: int) -> float:
         if score > best:
             best = score
             torch.save(
-                {"model": model.state_dict(), "backbone": BACKBONE,
-                 "fold": fold, "score": score},
+                {
+                    "model": model.state_dict(),
+                    "backbone": BACKBONE,
+                    "fold": fold,
+                    "score": score,
+                    # Provenance. Two checkpoints scoring differently are only
+                    # comparable if you know what changed between them, and the
+                    # label source is exactly the variable being changed now.
+                    "labels": os.path.basename(LABELS),
+                    "epochs": EPOCHS,
+                    "n_groups": int(len(set(groups))),
+                },
                 f"/kaggle/working/knee_fold{fold}.pth",
             )
             print(f"   saved (best {best:.4f})")
