@@ -258,6 +258,49 @@ cover both mount layouts and the prune.
 > **Lesson: diagnose by dumping actual state, not by guessing a second fix.** One diagnostic run
 > gave the answer that two rounds of speculation would not have.
 
+### Session 13: ENSEMBLE LABELS — 0.757 -> 0.8234 vs gold
+
+The LLM extractor finally ran (on Kaggle GPU, Qwen2.5-Instruct, open weights).
+Headline numbers on the 58 gold studies:
+
+| Extractor | Macro AUC |
+|---|---|
+| Rule | 0.7565 |
+| LLM | 0.7806 |
+| **Plain mean of both** | **0.8234** |
+
+**The LLM alone (+0.024) is inside the n=58 noise band and is NOT a clear win.** The ensemble is,
+at +0.067 over the rule extractor. It is also a legitimate combination rather than fitting: an
+unweighted mean has no parameters tuned against the gold set. Per-label *selection* would be
+overfitting the only ground truth we have, and is deliberately not done.
+
+#### Why it works: the errors are complementary
+
+| Label | Rule | LLM | Delta |
+|---|---|---|---|
+| **Effusion** | 0.612 | **0.790** | **+0.178** |
+| Medial OA | 0.778 | 0.877 | +0.099 |
+| Lateral OA | 0.757 | 0.844 | +0.087 |
+| Medial Meniscus | 0.759 | 0.845 | +0.086 |
+| Synovitis | 0.630 | 0.679 | +0.049 |
+| Contusion | 0.677 | 0.726 | +0.049 |
+| **MCL** | **0.859** | 0.655 | **-0.204** |
+| ACL | 0.906 | 0.876 | -0.030 |
+
+The LLM fixes exactly what regex could not — **Effusion**, the label session 7 gave up on — while
+the rule extractor is far better on **MCL**, where the LLM predicted 33 positives against 9 actual
+(precision 0.212). Neither is dominant; averaging captures both.
+
+#### Reproducibility gap, now fixed
+
+That run's Kaggle log came back **0 bytes**, so there is no record of whether the 4-bit 7B path or
+the 3B fp16 fallback produced the scores. The numbers are real (the scores CSV survived and was
+re-scored locally against gold), but the model behind them is unknown. The notebook now writes
+`llm_run_info.txt` alongside its output so this cannot recur.
+
+Also: Kaggle kernel logs are **sometimes JSON, sometimes plain text**. A JSON-only parser fails
+silently and looks like an empty run.
+
 ### Kaggle run order
 
 1. Upload `src/` as a Kaggle Dataset (`knee-src`) and `data/labels_v1.csv` (`knee-labels`).

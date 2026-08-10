@@ -84,7 +84,13 @@ from src.labels import ID_COLUMN, TARGETS                 # noqa: E402
 # smaller models handle poorly. 4-bit keeps it ~5 GB so it fits a T4 with room
 # for activations; fp16 would be ~15 GB of 15 and OOM mid-run.
 MODEL = os.environ.get("LLM_MODEL", "Qwen/Qwen2.5-7B-Instruct")
-RUN_FULL = False          # flip only if stage 1 beats the rule extractor
+# Stage 1 verdict (session 13, n=58): LLM 0.7806 vs rule 0.7565 — inside the
+# noise band alone, BUT the plain mean of the two scores 0.8234, +0.067 over
+# the rule extractor. The errors are complementary: the LLM wins Effusion by
+# +0.178 (our worst label) while the rule extractor wins MCL by +0.204. So the
+# full corpus run is justified — we need LLM scores for all 4,407 studies to
+# build ensemble labels.
+RUN_FULL = True
 MAX_NEW_TOKENS = 300
 BATCH = 4
 
@@ -235,8 +241,28 @@ if llm_macro and rule_macro:
 
 llm_scores.to_csv("/kaggle/working/llm_scores_gold.csv", index=False)
 
+# Record WHICH model produced these scores. The first successful run's Kaggle
+# log came back empty (0 bytes), leaving no way to tell whether the 4-bit 7B
+# path or the 3B fp16 fallback generated the numbers — fine for a one-off
+# comparison, useless for reproducing it. A sidecar file survives that.
+with open("/kaggle/working/llm_run_info.txt", "w") as fh:
+    fh.write(f"model={MODEL}\ngold_macro_auc={llm_macro}\nrule_macro_auc={rule_macro}\n")
+print(f"\nrecorded model={MODEL} in llm_run_info.txt")
+
 if RUN_FULL:
     print(f"\n--- full corpus: {len(train)} studies ---", flush=True)
     full = run(train[[ID_COLUMN, "Report"]])
     full.to_csv("/kaggle/working/labels_llm_v1.csv", index=False)
-    print("wrote labels_llm_v1.csv — publish as a Dataset and retrain")
+    print("wrote labels_llm_v1.csv")
+
+    # Build the ensemble labels here, where both score sets already exist.
+    # Plain unweighted mean — no per-label selection, which on n=58 gold
+    # studies would be fitting the only ground truth we have.
+    rule_full = RuleExtractor().extract_frame(train, id_column=ID_COLUMN)
+    merged = rule_full.merge(full, on=ID_COLUMN, suffixes=("_r", "_l"))
+    ens = pd.DataFrame({ID_COLUMN: merged[ID_COLUMN]})
+    for label in TARGETS:
+        ens[label] = (merged[f"{label}_r"] + merged[f"{label}_l"]) / 2
+    ens.to_csv("/kaggle/working/labels_ensemble_v1.csv", index=False)
+    print(f"wrote labels_ensemble_v1.csv ({len(ens)} studies) — "
+          "publish as a Dataset and retrain against it")
