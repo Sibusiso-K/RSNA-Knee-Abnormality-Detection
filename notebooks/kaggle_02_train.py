@@ -192,6 +192,14 @@ def run_fold(fold: int) -> float:
     valid_df = data[data["fold"] == fold]
     print(f"\n=== fold {fold}: train {len(train_df)} / valid {len(valid_df)} ===")
 
+    # The physical-scale crop falls back to the raw frame whenever PixelSpacing
+    # is missing or FOV_MM does not fit. A high fallback rate means the change
+    # is a no-op that still looks correct, so print the split rather than
+    # assume it worked. Read this before trusting any AUC below.
+    from src.data.dicom import CROP_STATS, FOV_MM
+
+    CROP_STATS.update(cropped=0, fallback=0)
+
     train_loader = DataLoader(
         KneeDataset(train_df, augment=True), batch_size=BATCH, shuffle=True,
         num_workers=2, pin_memory=True, drop_last=True,
@@ -255,6 +263,17 @@ def run_fold(fold: int) -> float:
             f"grouped-CV macro AUC {score:.4f}  ({time.time() - t0:.0f}s)"
         )
         print("   " + "  ".join(f"{k}:{v:.3f}" for k, v in per_label.items()))
+
+        if epoch == 0:
+            done = CROP_STATS["cropped"] + CROP_STATS["fallback"]
+            pct = 100.0 * CROP_STATS["cropped"] / max(done, 1)
+            print(
+                f"   physical crop @ {FOV_MM:.0f}mm: {pct:.1f}% of {done} slices cropped, "
+                f"{CROP_STATS['fallback']} fell back"
+            )
+            if pct < 50.0:
+                print("   !! FOV_MM rarely fits — this change is mostly a NO-OP. "
+                      "Lower FOV_MM or the comparison against 0.7746 is meaningless.")
 
         if score > best:
             best = score

@@ -99,6 +99,60 @@ def resize_volume(volume: np.ndarray, n_slices: int, size: int) -> np.ndarray:
     return out
 
 
+#: Side of the square field of view every frame is cropped to, in millimetres.
+#: A knee joint spans roughly 140 mm; 160 mm keeps the joint plus a margin for
+#: the Baker's cyst region, which sits posteriorly and is the finding most
+#: easily cropped away.
+FOV_MM = 160.0
+
+#: How often the crop actually applied vs fell back. A silent fallback would
+#: make this whole change a no-op while still looking correct, so training and
+#: inference print it. Reset with `CROP_STATS.update(cropped=0, fallback=0)`.
+CROP_STATS = {"cropped": 0, "fallback": 0}
+
+
+def physical_crop(frame: np.ndarray, ds, fov_mm: float = FOV_MM) -> np.ndarray:
+    """Centre-crop `frame` to a fixed *millimetre* field of view.
+
+    Why this is not optional: `PixelSpacing` varies across this corpus, so a
+    fixed-pixel resize hands the encoder the same anatomy at different scales
+    depending on which scanner produced the study — a 0.3 mm/px and a 0.6 mm/px
+    series of the same knee become images that differ by a factor of two. The
+    encoder then has to learn scale invariance it was never given the data to
+    learn, and the variation correlates with site, which is exactly the nuisance
+    our grouped CV is built to punish.
+
+    Cropping to a constant physical extent *before* the resize makes one output
+    pixel mean the same number of millimetres in every study.
+
+    Falls back to the untouched frame when spacing is missing or the requested
+    extent does not fit — degrading to the old behaviour for that slice beats
+    dropping it.
+    """
+    spacing = getattr(ds, "PixelSpacing", None)
+    if spacing is None:
+        CROP_STATS['fallback'] += 1
+        return frame
+    try:
+        row_mm, col_mm = float(spacing[0]), float(spacing[1])
+    except (TypeError, ValueError, IndexError):
+        CROP_STATS['fallback'] += 1
+        return frame
+    if row_mm <= 0 or col_mm <= 0:
+        CROP_STATS['fallback'] += 1
+        return frame
+
+    height, width = frame.shape
+    crop_h, crop_w = int(round(fov_mm / row_mm)), int(round(fov_mm / col_mm))
+    if crop_h < 2 or crop_w < 2 or crop_h > height or crop_w > width:
+        CROP_STATS['fallback'] += 1
+        return frame
+
+    top, left = (height - crop_h) // 2, (width - crop_w) // 2
+    CROP_STATS['cropped'] += 1
+    return frame[top : top + crop_h, left : left + crop_w]
+
+
 def load_series(series_dir: Path | str, n_slices: int = 16, size: int = 224) -> np.ndarray:
     """One series directory -> a normalized (n_slices, size, size) volume."""
     series_dir = Path(series_dir)
@@ -108,7 +162,9 @@ def load_series(series_dir: Path | str, n_slices: int = 16, size: int = 224) -> 
         pixels, ds = read_slice(dcm_path)
         if pixels is None:
             continue
-        frames.append((_slice_position(ds), pixels.astype(np.float32)))
+        # Crop to a constant physical extent first, so the resize below is the
+        # same anatomical scale for every scanner in the corpus.
+        frames.append((_slice_position(ds), physical_crop(pixels.astype(np.float32), ds)))
 
     if not frames:
         return np.zeros((n_slices, size, size), dtype=np.float32)
