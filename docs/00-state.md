@@ -14,7 +14,7 @@
 | Phase | Status |
 |---|---|
 | 0 — Access | ✅ Done |
-| 1 — Labels from reports | ✅ Rule extractor **0.757** vs gold. LLM extractor built, not yet benchmarked |
+| 1 — Labels from reports | ✅ **Ensemble (rule + LLM) 0.8234** vs gold, up from 0.757 rule-only |
 | 2 — Site-grouped CV | ✅ Done and **verified honest** (151 groups / 4,349 studies) |
 | 3 — Imaging model | ✅ **Fold 0 trained: 0.7746 grouped-CV macro AUC** |
 | 4 — Submission | ✅ Pipeline produces real predictions. **Not yet submitted to the leaderboard** |
@@ -28,6 +28,11 @@ is unfinished training rather than a plateau.
 
 **Nothing has been submitted to the leaderboard yet.** `submission.csv` is generated and validated;
 clicking Submit is a human action and consumes one of the daily slots.
+
+**Best available labels are now the ENSEMBLE at 0.8234** (rule + LLM mean), not the 0.757 rule-only
+`labels_v1.csv` that `knee-model-v1` was trained on. Retraining against ensemble labels is the
+highest-value pending change — session 11 showed label noise, not capacity, is the binding
+constraint.
 
 ### What runs today
 
