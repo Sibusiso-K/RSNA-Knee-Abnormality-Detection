@@ -33,6 +33,26 @@ is unfinished training rather than a plateau.
 **Nothing has been submitted to the leaderboard yet.** `submission.csv` is generated and validated;
 clicking Submit is a human action and consumes one of the daily slots.
 
+### ⚠️ The leaderboard is ~0.15 above our CV, and we cannot explain the gap
+
+Public LB read on **2026-08-10 16:00 UTC** (1,018 teams): 1st **0.942**, 20th **0.919**.
+Our honest site-grouped CV is **0.7746**.
+
+**Do not read that as "we are 0.15 behind."** The two numbers are not the same measurement:
+
+- Our CV scores predictions against **report-derived labels** (macro AUC 0.8234 vs gold at best).
+  Noisy targets cap measured AUC even for a perfect model, so 0.7746-against-noise is not
+  comparable to a score against the hidden test's actual truth.
+- Our CV holds out **entire scanner sites**. If the hidden test overlaps sites seen in training,
+  the LB is measuring an easier problem than our folds do — the forum probe put site memorisation
+  alone at +0.053.
+
+Both effects push the same way, but nothing here establishes they add up to 0.15. It could also be
+that the field is genuinely well ahead of us. **We currently have no way to tell, and that is the
+problem.** One submission converts this from speculation into a number, which is why submitting has
+moved up the priority list — see handover §5 action 2. Zero of our submission slots have ever been
+used, and the entry deadline (2026-10-15) is the real clock.
+
 **Best available labels are now the ENSEMBLE at 0.8234** (rule + LLM mean), not the 0.757 rule-only
 `labels_v1.csv` that `knee-model-v1` was trained on. Retraining against ensemble labels is the
 highest-value pending change — session 11 showed label noise, not capacity, is the binding
