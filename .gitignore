@@ -13,3 +13,4 @@ kaggle.json
 *.pth
 *.ckpt
 .DS_Store
+.mcp.json

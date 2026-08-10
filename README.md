@@ -4,7 +4,9 @@ Working repo for the Kaggle competition
 [RSNA Knee Abnormality Detection](https://www.kaggle.com/competitions/rsna-knee-abnormality-detection)
 — detecting twelve clinically important abnormalities on knee MRI.
 
-**→ Start at [docs/00-state.md](docs/00-state.md).** It says where the project is right now and what
+**→ Picking this up cold or on another machine? Start at [docs/09-handover.md](docs/09-handover.md).**
+
+**→ Already oriented? [docs/00-state.md](docs/00-state.md) is the living state file.** It says where the project is right now and what
 the next action is. Everything else is stable reference.
 
 ---
@@ -40,6 +42,8 @@ the next action is. Everything else is stable reference.
 | [05-plan.md](docs/05-plan.md) | Phased schedule to 2026-10-22, with risks |
 | [06-glossary.md](docs/06-glossary.md) | Every term, plain language — anatomy, MRI, DICOM, ML |
 | [07-environment.md](docs/07-environment.md) | Setup on any machine, local↔Kaggle workflow, doc upkeep |
+| [08-model-and-rules.md](docs/08-model-and-rules.md) | Architecture rationale, licensing, competition-rules position |
+| **[09-handover.md](docs/09-handover.md)** | **Cold-start handover: state, traps, next actions** |
 
 New to the project? Read **00 → 02 → 03 → 04**. The rest is reference.
 
