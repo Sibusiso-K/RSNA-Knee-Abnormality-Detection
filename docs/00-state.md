@@ -169,6 +169,54 @@ Verified numerically rather than by inspection: batch-2×4 accumulation produces
 **identical** to a true batch-8 step, and the optimiser-step count (1652) fits the schedule
 budget (1656).
 
+### Session 11: FIRST TRAINED MODEL — fold 0 grouped-CV macro AUC **0.7746**
+
+The first real imaging result, and it clears both floors decisively.
+
+| Epoch | Grouped-CV macro AUC | Loss | Time |
+|---|---|---|---|
+| 0 | 0.6818 | 1.078 | 3601 s |
+| 1 | 0.7304 | 1.065 | 3450 s |
+| 2 | 0.7590 | 0.911 | 3529 s |
+| **3** | **0.7746** | 0.741 | 3521 s |
+
+Floors: 0.500 constant · 0.595 series-composition · **0.598 DICOM-metadata-only (site-grouped)**.
+At 0.7746 the model is genuinely reading images, not memorising scanners.
+
+Per-label at epoch 3:
+`Contusion 0.865 · Fracture 0.858 · Baker's 0.844 · Synovitis 0.836 · ACL 0.775 · MCL 0.771 ·
+PF OA 0.754 · Lateral OA 0.744 · Effusion 0.738 · Medial OA 0.714 · Medial Meniscus 0.702 ·
+Lateral Meniscus 0.695`
+
+#### The fingerprint fix worked
+
+```
+151 distinct fingerprints  (was 3,229)
+grouping: 151 groups / 4349 studies (ratio 0.03), singletons 43,
+          largest [350, 256, 233, 214, 211]
+```
+
+Ratio **0.74 → 0.03**; largest groups hold 200–350 studies. This is real site-grouped CV, and 151
+is the right order of magnitude against the forum's reported 265. **The 0.7746 is honest.**
+
+#### Two findings worth acting on
+
+- **Synovitis 0.836 from imaging, vs 0.630 from text.** It was the *worst* text label — session 7
+  concluded regex fundamentally could not extract it (only 3/27 gold positives even carry a
+  thickening word). The imaging model learns it far better than its labels suggest, which says the
+  architecture is sound and that **label noise, not capacity, is the current ceiling.**
+- **Menisci are now the weak spot (0.702 / 0.695).** Exactly as [02-domain-primer.md](02-domain-primer.md)
+  predicted: a tear spanning ~3 slices of 16 is the hardest thing in this dataset, and the one most
+  punished by aggressive slice downsampling.
+
+#### Not converged
+
+Loss fell 1.08 → 0.74 and AUC rose every epoch — training was **stopped early, not finished**. More
+epochs is the cheapest available gain before touching architecture.
+
+Checkpoint `knee_fold0.pth` (82 MB) verified loadable — correct backbone, head `[12, 3840]`,
+score recorded — and published as private dataset `knee-model-v1`.
+
 ### Kaggle run order
 
 1. Upload `src/` as a Kaggle Dataset (`knee-src`) and `data/labels_v1.csv` (`knee-labels`).
@@ -183,7 +231,20 @@ budget (1656).
 submission path can be proven end to end **before** the model exists. Worth doing first — it
 converts "does our notebook even produce a scoreable file" from an unknown into a settled question.
 
-## Immediate next step (session 9 starting point)
+## Immediate next steps (after session 11)
+
+1. **Train longer.** 4 epochs was not convergence — loss and AUC were both still improving. 8–10
+   epochs on fold 0 is the cheapest gain available and needs no code change beyond `EPOCHS`.
+2. **Run the remaining folds** only once epoch count is settled; 5 folds × 4 h is most of a weekly
+   quota, so don't spend it on a configuration still being tuned.
+3. **Submit.** `knee-model-v1` is published and `kaggle_03_submit.py` already resolves checkpoints
+   from it. The submission path is proven end to end (session 10), so this is now low-risk.
+4. **Then** improve labels, not the model. Synovitis scoring 0.836 from images while its text
+   labels sit at 0.630 is direct evidence that **label noise is the binding constraint** — which is
+   what the LLM extractor (Phase 1 step 2) exists to fix, and what the rules change now permits
+   more options for.
+
+## Older: immediate next step (session 9 starting point)
 
 Just run this — the reliability fix is in, verified working, nothing else to set up:
 
