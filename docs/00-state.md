@@ -4,11 +4,14 @@
 > Every other doc explains something stable; this one changes constantly.
 > **Update it at the end of every working session.** If it's stale, everything else is a trap.
 
-**Last updated:** 2026-08-10 (handover — see [09-handover.md](09-handover.md))
+**Last updated:** 2026-08-10, 17:00 UTC (post-handover session)
 
-> ⚠️ **Two kernels were still running at handover** and their results are not recorded
-> anywhere: `knee-train-8ep` (8 epochs) and `knee-llm-labels` (full-corpus ensemble
-> labels). Collect them first — see §4 of the handover doc.
+> ✅ **`knee-train-8ep` collected** — 8 epochs is not better than 4, see below.
+> ✅ **First leaderboard submission made — 0.783**, and CV transfers.
+> ⏳ **`knee-llm-labels` v3 still RUNNING** (started 09:13 UTC, 12 h ceiling ≈ 21:13 UTC).
+> It writes `labels_ensemble_v1.csv` only after all 4,407 studies finish, so a timeout
+> loses the whole run. **v3 is running the pre-sharding code** — the chunked/sharded
+> rewrite in `kaggle_04_llm_labels.py` protects the *next* attempt, not this one.
 **Days to final submission (2026-10-22):** ~73
 
 ---
@@ -21,7 +24,7 @@
 | 1 — Labels from reports | ✅ **Ensemble (rule + LLM) 0.8234** vs gold, up from 0.757 rule-only |
 | 2 — Site-grouped CV | ✅ Done and **verified honest** (151 groups / 4,349 studies) |
 | 3 — Imaging model | ✅ **Fold 0 trained: 0.7746 grouped-CV macro AUC** |
-| 4 — Submission | ✅ Pipeline produces real predictions. **Not yet submitted to the leaderboard** |
+| 4 — Submission | ✅ **Submitted 2026-08-10: public LB 0.783** (CV 0.7746 — CV transfers) |
 
 **Trained model exists and works.** `knee-model-v1` (fold 0, EfficientNetV2-S 2.5D +
 attention-MIL) scores **0.7746** under honest site-grouped CV — well clear of the 0.598
@@ -57,28 +60,36 @@ spend the GPU hours on ensemble labels instead.
 pushed, so `knee-src` predates it. We know from the run config it was rule-only `labels_v1`, 8
 epochs, but the file itself does not say so. Provenance is not retroactive.
 
-**Nothing has been submitted to the leaderboard yet.** `submission.csv` is generated and validated;
-clicking Submit is a human action and consumes one of the daily slots.
+### ✅ RESOLVED: our CV transfers, and the gap to the field is real
 
-### ⚠️ The leaderboard is ~0.15 above our CV, and we cannot explain the gap
+**First submission, 2026-08-10: public LB `0.783`** (submission `55411501`, fold-0 `knee-model-v1`,
+rule-only labels). Site-grouped CV for the same checkpoint was **0.7746**.
 
-Public LB read on **2026-08-10 16:00 UTC** (1,018 teams): 1st **0.942**, 20th **0.919**.
-Our honest site-grouped CV is **0.7746**.
+**The LB came in +0.008 above CV.** That settles a question this file previously listed as open.
+The earlier reasoning went: our CV might badly *understate* us, because (a) it scores against noisy
+report-derived labels, and (b) it holds out entire scanner sites while the hidden test may not.
+Either effect would have put the LB well above 0.7746. **Neither did. That hypothesis is dead.**
 
-**Do not read that as "we are 0.15 behind."** The two numbers are not the same measurement:
+Two consequences, and the second is unwelcome:
 
-- Our CV scores predictions against **report-derived labels** (macro AUC 0.8234 vs gold at best).
-  Noisy targets cap measured AUC even for a perfect model, so 0.7746-against-noise is not
-  comparable to a score against the hidden test's actual truth.
-- Our CV holds out **entire scanner sites**. If the hidden test overlaps sites seen in training,
-  the LB is measuring an easier problem than our folds do — the forum probe put site memorisation
-  alone at +0.053.
+1. **Site-grouped CV predicts the leaderboard almost exactly.** We can iterate against CV and trust
+   it, without spending submission slots to find out. This is worth a lot — 5 slots/day, and the
+   grouping discipline in §"Discipline" is what earned it.
+2. **We are genuinely ~0.16 behind.** Top 0.942, 20th 0.919, us 0.783 (1,018 teams). This is a
+   capability deficit, not a measurement artifact. Do not soften this.
 
-Both effects push the same way, but nothing here establishes they add up to 0.15. It could also be
-that the field is genuinely well ahead of us. **We currently have no way to tell, and that is the
-problem.** One submission converts this from speculation into a number, which is why submitting has
-moved up the priority list — see handover §5 action 2. Zero of our submission slots have ever been
-used, and the entry deadline (2026-10-15) is the real clock.
+Read alongside the `knee-train-8ep` result above — more epochs bought nothing and began overfitting
+— both findings point away from the training loop and at the labels. That is the project's existing
+thesis, now supported by evidence rather than inference.
+
+⚠️ **But calibrate expectations about labels too.** Ensemble labels are +0.067 *on label quality vs
+gold*, and label quality does not translate 1:1 into imaging AUC (the model already partly sees
+through the noise). **Better labels alone will not close 0.16.** Something beyond the current
+recipe — more slices/resolution, multi-fold ensembling, a stronger backbone, or an approach we have
+not tried — is needed to be competitive. Treat the ensemble retrain as the next step, not the plan.
+
+Entry deadline 2026-10-15 is the real clock. Note only **2 submissions count** toward the final
+leaderboard score (Kaggle auto-selects the best if fewer are chosen).
 
 **Best available labels are now the ENSEMBLE at 0.8234** (rule + LLM mean), not the 0.757 rule-only
 `labels_v1.csv` that `knee-model-v1` was trained on. Retraining against ensemble labels is the
