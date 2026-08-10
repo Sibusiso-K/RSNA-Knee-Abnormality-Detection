@@ -217,6 +217,41 @@ epochs is the cheapest available gain before touching architecture.
 Checkpoint `knee_fold0.pth` (82 MB) verified loadable — correct backbone, head `[12, 3840]`,
 score recorded — and published as private dataset `knee-model-v1`.
 
+### Session 12: submission pipeline produces real predictions
+
+`knee-submit` v5 runs real inference from `knee-model-v1`:
+
+```
+ckpt: /kaggle/input/knee-model-v1   checkpoints found: 1
+loaded 1 model(s) on cuda
+WROTE submission.csv - shape (3, 13), load failures: 0
+```
+
+Schema matches `sample_submission.csv` exactly, no NaN, all in [0,1], **zero constant-0.5 rows**,
+mean per-label spread 0.251 - genuinely differentiated output, not a degenerate constant.
+
+#### The bug worth remembering: a silent constant-0.5 submission
+
+v3 ran clean, exited 0, wrote a valid file - and never loaded the model. It would have scored
+0.500 while looking perfectly healthy, wasting a daily submission slot.
+
+Cause was a regression introduced one commit earlier: scoping the checkpoint search to
+`/kaggle/input/datasets` with an early `return None`, to avoid crawling the 819,640-file
+competition tree. **Kaggle mounts datasets inconsistently within the same run** - measured:
+
+```
+/kaggle/input/datasets/sibusisokhumalo11/knee-src   (nested)
+/kaggle/input/knee-model-v1                          (flat)
+```
+
+so the early return gave up before seeing the model. Now walks all of `/kaggle/input` and prunes
+only `competitions/`. Any fallback now prints a loud banner - a degraded run that still writes a
+scoreable file is worse than a crash precisely because it is easy to miss. 4 regression tests
+cover both mount layouts and the prune.
+
+> **Lesson: diagnose by dumping actual state, not by guessing a second fix.** One diagnostic run
+> gave the answer that two rounds of speculation would not have.
+
 ### Kaggle run order
 
 1. Upload `src/` as a Kaggle Dataset (`knee-src`) and `data/labels_v1.csv` (`knee-labels`).
