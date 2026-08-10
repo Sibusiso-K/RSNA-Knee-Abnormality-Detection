@@ -27,8 +27,35 @@
 attention-MIL) scores **0.7746** under honest site-grouped CV — well clear of the 0.598
 metadata-only floor, so it is reading images, not memorising scanners.
 
-**In flight:** `knee-train-8ep` (8 epochs, fold 0) — fold 0 was still improving at epoch 3, so this
-is unfinished training rather than a plateau.
+### `knee-train-8ep` landed: 8 epochs is **not** better than 4
+
+Completed 2026-08-10, 29,974 s (8.3 h) on T4×2, ~3,600 s/epoch.
+
+| Epoch | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
+|---|---|---|---|---|---|---|---|---|
+| AUC | 0.6707 | 0.7249 | 0.7487 | 0.7388 | 0.7600 | 0.7642 | **0.7697** | 0.7664 |
+| loss | 1.0620 | 1.0168 | 0.9878 | 0.8940 | 0.7646 | 0.6231 | 0.4880 | 0.4135 |
+
+**Best 0.7697 (epoch 6) vs the 4-epoch run's 0.7746 — doubling the epochs did not help.** The −0.005
+is within noise; the honest statement is "no improvement", not "a regression".
+
+**Do not compare these two runs epoch-by-epoch.** `OneCycleLR` sets
+`total_steps = EPOCHS * steps_per_epoch`, so the LR schedule stretches to whatever `EPOCHS` is. At
+epoch 3 the 4-epoch run had fully annealed (0.7746 = converged) while this run was still mid-
+schedule (0.7388). Only the end-of-schedule numbers are comparable. The handover's expectation —
+"should beat 0.7746, fold 0 was still improving at epoch 3" — was based on exactly that invalid
+comparison.
+
+**The last two epochs are an overfitting signature:** loss fell 1.06 → 0.41 (−61%) while AUC
+plateaued and then *declined* at epoch 7, with LR annealing to zero. More epochs are memorising the
+training set, not learning the findings. **This is direct evidence for the central thesis: capacity
+and training budget are not the binding constraint — label noise is.** Do not extend to 12+ epochs;
+spend the GPU hours on ensemble labels instead.
+
+⚠️ The checkpoint carries only `backbone` / `fold` / `score` — **not** the `labels` / `epochs` /
+`n_groups` provenance the handover describes. That change (a1c6fd7) landed after this kernel was
+pushed, so `knee-src` predates it. We know from the run config it was rule-only `labels_v1`, 8
+epochs, but the file itself does not say so. Provenance is not retroactive.
 
 **Nothing has been submitted to the leaderboard yet.** `submission.csv` is generated and validated;
 clicking Submit is a human action and consumes one of the daily slots.
