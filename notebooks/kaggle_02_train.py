@@ -107,7 +107,13 @@ N_SLICES, SIZE = 16, 224
 # for a batch of 2 including the backward pass. Batch 4 would sit right on the
 # ceiling and OOM partway through an epoch — the expensive way to find out.
 # Gradient accumulation recovers the effective batch size for free.
-BATCH, ACCUM, EPOCHS, LR = 2, 4, 4, 3e-4   # effective batch = 8
+# EPOCHS=8, not 10+: measured 3,500 s/epoch on a T4 (session 11), so 8 epochs
+# is ~7.8 h against Kaggle's 12 h kernel ceiling — headroom for a slow queue or
+# a stray retry. 10 would be ~9.7 h and one bad epoch from losing the whole run
+# with no checkpoint newer than the last improvement.
+# Fold 0 was still improving at epoch 3 (loss 1.08->0.74, AUC rising every
+# epoch), so this is unfinished training, not a plateau.
+BATCH, ACCUM, EPOCHS, LR = 2, 4, 8, 3e-4   # effective batch = 8
 N_FOLDS, TRAIN_FOLDS = 5, [0]      # widen once one fold's timing is known
 BACKBONE = "tf_efficientnetv2_s.in21k_ft_in1k"
 
