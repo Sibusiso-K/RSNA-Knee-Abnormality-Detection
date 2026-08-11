@@ -21,6 +21,8 @@ cheap part of the network.
 
 from __future__ import annotations
 
+import os
+
 import torch
 import torch.nn as nn
 
@@ -50,6 +52,59 @@ class AttentionPool(nn.Module):
         return (x * weights).sum(dim=1), weights.squeeze(-1)
 
 
+class DinoEncoder(nn.Module):
+    """A DINOv2 ViT wrapped to the same contract as a timm backbone.
+
+    Maps (N, 3, H, W) -> (N, D) by taking the CLS token, so it drops straight
+    into KneeNet in place of `timm.create_model(...)` and every downstream part
+    (AttentionPool, the head) is unchanged.
+
+    Why bother: the public 0.899 baseline is not a better-tuned version of this
+    pipeline, it is a different one — a self-supervised ViT *adapted* with a
+    near-frozen encoder, rather than an ImageNet CNN retrained end to end. Our
+    EfficientNetV2-S recipe measures 0.7767. That gap is architectural, and it
+    is the only difference identified so far that is plausibly worth ~0.1
+    rather than the ~0.002 that preprocessing tweaks have been returning.
+
+    `path` must be a local directory (Kaggle mounts the model at
+    /kaggle/input/dinov2/pytorch/base/1). Submission notebooks run with the
+    internet OFF, so downloading weights by name at runtime cannot work.
+    """
+
+    #: DINOv2 is patch-14. Any input side must be a multiple of 14 or the
+    #: patch embedding silently drops a partial patch and position embeddings
+    #: stop lining up. 224 = 14x16 and 336 = 14x24; **256 is not** (18.29), so
+    #: the 256px config written for the CNN is invalid for this encoder.
+    PATCH = 14
+
+    def __init__(self, path: str, unfreeze_last: int = 4) -> None:
+        super().__init__()
+        from transformers import AutoModel
+
+        self.vit = AutoModel.from_pretrained(path)
+        self.num_features = int(self.vit.config.hidden_size)
+
+        # Adapt, do not retrain. Full fine-tuning of a self-supervised ViT on
+        # ~3.5k noisy-labelled studies destroys the pretrained features; the
+        # baseline opens only the last few blocks and pairs that with a tiny
+        # backbone LR. Everything else stays frozen, which also cuts the
+        # activation memory a 15 GB T4 has to hold.
+        for param in self.vit.parameters():
+            param.requires_grad = False
+        blocks = self.vit.encoder.layer
+        for block in blocks[max(0, len(blocks) - unfreeze_last):]:
+            for param in block.parameters():
+                param.requires_grad = True
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.shape[-1] % self.PATCH or x.shape[-2] % self.PATCH:
+            raise ValueError(
+                f"DINOv2 is patch-{self.PATCH}: input side must be a multiple of "
+                f"{self.PATCH}, got {tuple(x.shape[-2:])}. Use 224 or 336, not 256."
+            )
+        return self.vit(pixel_values=x).last_hidden_state[:, 0]  # CLS token
+
+
 class KneeNet(nn.Module):
     """(B, 3, S, H, W) -> (B, 12) logits."""
 
@@ -59,13 +114,21 @@ class KneeNet(nn.Module):
         n_classes: int = 12,
         pretrained: bool = True,
         dropout: float = 0.3,
+        unfreeze_last: int = 4,
     ) -> None:
         super().__init__()
-        import timm
 
-        self.backbone = timm.create_model(
-            backbone, pretrained=pretrained, num_classes=0, in_chans=3
-        )
+        # A path rather than a timm name selects the DINOv2 encoder. Kept as one
+        # argument so checkpoints, the submission notebook and the training
+        # script all keep working without a second code path to drift.
+        if "/" in backbone or os.path.isdir(backbone):
+            self.backbone = DinoEncoder(backbone, unfreeze_last=unfreeze_last)
+        else:
+            import timm
+
+            self.backbone = timm.create_model(
+                backbone, pretrained=pretrained, num_classes=0, in_chans=3
+            )
         dim = self.backbone.num_features
 
         # One pooling head per plane: a sagittal stack and an axial stack want
