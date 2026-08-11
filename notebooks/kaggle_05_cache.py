@@ -107,6 +107,7 @@ from src.data.slots import (  # noqa: E402
     side_from_geometry,
     study_side,
 )
+from src.model.validation import FINGERPRINT_TAGS, _clean_tag  # noqa: E402
 
 # -------------------------------------------------------------------------
 
@@ -142,6 +143,13 @@ HDR_TAGS = [
     "ScanningSequence", "RepetitionTime", "EchoTime", "Laterality",
     "PixelSpacing", "Rows", "Columns", "ImagePositionPatient",
     "ImageOrientationPatient", "InstanceNumber",
+    # The scanner fingerprint is captured HERE, while a header is already open,
+    # and written into the index. Site-grouped CV is the instrument this
+    # project trusts over the leaderboard, and rebuilding it at training time
+    # would mean the training job needs the DICOMs — which would chain it to
+    # Kaggle forever. With the fingerprint in the index, training needs only
+    # the cache, the index and the labels, and runs on any GPU anywhere.
+    *FINGERPRINT_TAGS,
 ]
 
 
@@ -183,11 +191,11 @@ def slice_key(ds):
 
 
 def probe_study(study_uid):
-    """One header per series -> [SeriesInfo], plus the per-series file lists."""
-    infos, files_of = [], {}
+    """One header per series -> [SeriesInfo], file lists, scanner fingerprint."""
+    infos, files_of, fingerprint = [], {}, ""
     study_dir = os.path.join(SERIES_DIR, study_uid)
     if not os.path.isdir(study_dir):
-        return infos, files_of
+        return infos, files_of, fingerprint
 
     for series_uid in sorted(os.listdir(study_dir)):
         files = glob.glob(os.path.join(study_dir, series_uid, "*.dcm"))
@@ -196,6 +204,17 @@ def probe_study(study_uid):
         ds = read_header(files[0])
         if ds is None:
             continue
+
+        if not fingerprint:
+            # One fingerprint per study, from the first readable header. Note
+            # _clean_tag rounds ImagingFrequency to whole MHz: used raw it
+            # drifts between sessions on the same magnet and produced 3,229
+            # groups across 4,349 studies, degrading GroupKFold to random
+            # KFold and reinstating the ~0.053 of site leakage it exists to
+            # prevent.
+            fingerprint = "|".join(
+                _clean_tag(tag, getattr(ds, tag, None)) for tag in FINGERPRINT_TAGS
+            )
 
         plane = PLANE_OF.get(series_uid)
         if not isinstance(plane, str) or plane not in ("Sagittal", "Coronal", "Axial"):
@@ -238,7 +257,7 @@ def probe_study(study_uid):
             )
         )
         files_of[series_uid] = files
-    return infos, files_of
+    return infos, files_of, fingerprint
 
 
 def read_slot(files, plane, side):
@@ -313,7 +332,7 @@ lat_agree = lat_disagree = lat_tag_only = lat_geom_only = 0
 
 for n, study_uid in enumerate(studies):
     try:
-        infos, files_of = probe_study(study_uid)
+        infos, files_of, fingerprint = probe_study(study_uid)
         side = study_side(infos)
         sides[side if side in ("L", "R") else None] += 1
 
@@ -331,7 +350,8 @@ for n, study_uid in enumerate(studies):
 
         picked = pick_slot_series(infos)
 
-        row = {"StudyInstanceUID": study_uid, "side": side or ""}
+        row = {"StudyInstanceUID": study_uid, "side": side or "",
+               "fingerprint": fingerprint}
         for slot_i, info in enumerate(picked):
             name = SLOTS[slot_i][0]
             if info is None:

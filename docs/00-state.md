@@ -4,27 +4,87 @@
 > Every other doc explains something stable; this one changes constantly.
 > **Update it at the end of every working session.** If it's stale, everything else is a trap.
 
-**Last updated:** 2026-08-10, 17:00 UTC (post-handover session)
+**Last updated:** 2026-08-11, 21:30 UTC (session 15 — measured the field, rebuilt the input)
 
-> ✅ **`knee-train-8ep` collected** — 8 epochs is not better than 4, see below.
-> ✅ **First leaderboard submission made — 0.783**, and CV transfers.
-> ⛔ **GPU quota exhausted (30 h/week)** as of 2026-08-11 04:45 UTC. Running sessions
-> survive it; new launches are refused. **Blocked: `train-hires` and LLM shard 2.**
+> ## Session 15: we are 713th of 1,185, and below a notebook anyone can fork
 >
-> **LLM labels, sharded rewrite — 2,938 of 4,407 studies done (66.7%).**
-> Shard 0 ✅ 1,469 · shard 1 ✅ 1,469 · shard 2 ⛔ 1,469 remaining (quota).
-> Partials published privately as `knee-llm-partials`. **No `labels_ensemble_v1.csv`
-> yet** — it is gated on full corpus coverage by design, so there is still nothing to
-> retrain against.
+> **Measured, not estimated** (Kaggle API, 2026-08-11):
 >
-> The design earned its keep: shard 0 errored at 1,200/1,469, the chunked partial
-> survived, and the relaunch resumed and finished the remaining 269 instead of redoing
-> ~2 h. The pre-sharding code lost an entire ~7.5 h run to the same class of failure.
+> | | |
+> |---|---|
+> | Us | **0.783 — rank 713 / 1,185** |
+> | Top 10 cutoff | **0.930** |
+> | Rank 100 | 0.901 · Rank 50 0.912 · Rank 1 0.943 |
+> | Teams ≥ 0.80 | **693** |
+> | Free public notebook | **0.899** (`aadigupta7686/0-899-let-me-cook`, a fork of the 280-vote `pilkwang/rsna-knee-baseline-v1`) |
 >
-> ⚠️ At 30 h/week a single 4-epoch run is ~1/8 of the budget — roughly 6–7 experiments
-> per week. Spend them on untested levers, not tweaks: the 160 mm crop cost 4 h to
-> learn nothing (0.7767 vs 0.7746).
-**Days to final submission (2026-10-22):** ~73
+> **The gap is not mysterious and it is not capacity.** Reading our own source against
+> the four preprocessing defects published by a top team (discussion 734105 §6), we have
+> two of them outright, plus three more of our own. Every one is fixed in code as of this
+> session; none has been trained yet.
+>
+> | Defect | Us before | Now |
+> |---|---|---|
+> | **Laterality normalisation** | ❌ absent entirely | ✅ from image centre in patient space |
+> | **Effective resolution** | ❌ 160 mm @ 224 px = 0.714 mm/px | ✅ 130 mm @ 336 px = 0.387 mm/px |
+> | **Sequence routing** | ❌ 3 planes, fluid-only, `iloc[0]` | ✅ 6 slots, weighting from DICOM headers |
+> | **Vertical-flip augmentation** | ❌ destroyed where findings sit | ✅ removed (rigid jitter only) |
+> | **DICOM decode per epoch** | ❌ ~3,600 s/epoch, ~1.3 M decodes/run | ✅ cached once on free CPU |
+> | Slice ordering by geometry | ✅ already correct | unchanged |
+> | 2.5D triplet into encoder | ✅ already correct | unchanged |
+>
+> **Laterality is the big one.** Five of twelve targets are side-specific (Medial/Lateral
+> Meniscus, Medial/Lateral OA, MCL). Left and right knees are mirror images, so "medial"
+> was landing on opposite sides of the frame at random across **42% of the macro metric**.
+> Measured on 40 studies: side resolves for **100%** of them (L=21, R=19, none unknown).
+>
+> **Resolution explains the dead 160 mm experiment.** At 0.714 mm/px a 1–3 mm meniscal
+> tear is 1–4 pixels. The crop was the right idea at the wrong scale — which is why it
+> returned 0.002 rather than nothing at all.
+>
+> ⛔ **GPU quota exhausted: 34:15 / 30 hrs.** Resets weekly.
+> ✅ **Kaggle TPU untouched: 00:00 / 20 hrs.**
+> ✅ **DICOM decoding is CPU work and CPU notebooks do not draw on the GPU quota.**
+> That is the unblock: `kaggle_05_cache.py` builds the whole input on free CPU.
+>
+> **The cache is the strategic move, not just an optimisation.** `kaggle_02_train.py`
+> decoded every DICOM inside `__getitem__`, so ~90% of each GPU hour went to decoding
+> while the GPU idled. Decoding once converts the 30 h/week from ~1/8 useful to nearly
+> all useful — roughly **8x more effective training throughput on the same free-tier
+> allowance**. It also makes training portable: the cache is ~9 GB, so it runs on
+> Lightning or anywhere else, while the 570 GB of DICOMs never leave Kaggle.
+>
+> **Labels: ours are superseded, and that closes a blocked workstream.**
+> `scripts/compare_labels.py` re-scores every candidate on the same 58 gold studies:
+>
+> | Source | macro vs gold |
+> |---|---|
+> | `stevenleehans/llm_labels_v4_blend` | **0.8927** |
+> | cross-author rank-mean blend (steven + pilkwang + sol56) | **0.8941** |
+> | `pilkwang/report_labels_v2` | 0.8700 |
+> | **ours, `labels_v1.csv` (rule-only)** | **0.7565** |
+> | ours + the public sets blended in | 0.8849 — *worse*, ours drags it down |
+>
+> ⚠️ On 58 studies anything under ~0.02 is unresolvable, so 0.8941 and 0.8927 are the
+> same number. The honest reading is "the public sets are far better than ours, and
+> which of them is best is undecided".
+>
+> **Consequence: stop work on LLM shard 2.** It was blocked on GPU quota and aimed at
+> `labels_ensemble_v1.csv` (projected ~0.8234). The public sets already beat that
+> projection by ~0.07 without spending an hour of quota. That workstream is closed.
+>
+> ⚠️ **Two guards worth keeping.** `compare_labels.py` refuses candidates that score a
+> perfect 1.0000: `barun2104`'s fold files carry `train.csv`'s own label columns —
+> 696/696 cells identical on gold, NaN everywhere else. Ranking a globbed directory by
+> score would have crowned the answer key and let it define the label strategy. And the
+> cache build now audits geometry-derived laterality against the `Laterality` tag,
+> because a mirror applied to the wrong half of the corpus is strictly worse than none.
+>
+> **Not yet known:** whether any of this moves the leaderboard. Nothing has been trained
+> on the new representation. The numbers above are input-quality measurements, and
+> `docs/00-state.md` has three times recorded a label improvement that did not transfer.
+
+**Days to final submission (2026-10-22):** ~72
 
 ---
 
