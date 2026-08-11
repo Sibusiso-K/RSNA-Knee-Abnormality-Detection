@@ -105,9 +105,14 @@ def resize_volume(volume: np.ndarray, n_slices: int, size: int) -> np.ndarray:
 #: easily cropped away.
 FOV_MM = 160.0
 
-#: How often the crop actually applied vs fell back. A silent fallback would
-#: make this whole change a no-op while still looking correct, so training and
-#: inference print it. Reset with `CROP_STATS.update(cropped=0, fallback=0)`.
+#: How often the crop actually applied vs fell back.
+#:
+#: ⚠️ **Only meaningful in a single process.** The training DataLoader runs
+#: num_workers=2, so these increment inside the worker processes and the parent
+#: reads zero — the first crop run reported "0 of 0 slices" for exactly this
+#: reason and could not be interpreted. Use `report_crop_coverage()` in
+#: kaggle_02_train.py, which measures from headers in the calling process,
+#: rather than trusting this across a fork.
 CROP_STATS = {"cropped": 0, "fallback": 0}
 
 

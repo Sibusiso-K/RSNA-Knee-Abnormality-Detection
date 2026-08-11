@@ -187,18 +187,62 @@ class KneeDataset(Dataset):
         return torch.from_numpy(volume).float(), torch.from_numpy(y)
 
 
+def report_crop_coverage(frame, n_sample: int = 60) -> float:
+    """What fraction of sampled series can actually take the FOV_MM crop?
+
+    Answers the only question that decides whether a crop-vs-no-crop AUC
+    comparison means anything: if FOV_MM rarely fits, physical_crop falls back
+    to the raw frame and the run is measuring nothing. Reads one header per
+    sampled series — no pixel decode, so this costs seconds.
+    """
+    import glob
+
+    import pydicom
+
+    from src.data.dicom import FOV_MM
+
+    fits = total = 0
+    spacings = []
+    for study in frame["StudyInstanceUID"].head(n_sample):
+        uids = series[series["StudyInstanceUID"] == study]["SeriesInstanceUID"]
+        for series_uid in uids:
+            found = glob.glob(f"{COMP}/train_series/{study}/{series_uid}/*.dcm")
+            if not found:
+                continue
+            try:
+                ds = pydicom.dcmread(found[0], stop_before_pixels=True)
+                row_mm, col_mm = float(ds.PixelSpacing[0]), float(ds.PixelSpacing[1])
+                rows, cols = int(ds.Rows), int(ds.Columns)
+            except Exception:
+                continue
+            total += 1
+            spacings.append(row_mm)
+            if row_mm > 0 and col_mm > 0 and FOV_MM / row_mm <= rows and FOV_MM / col_mm <= cols:
+                fits += 1
+            break  # one series per study is a sufficient sample
+
+    pct = 100.0 * fits / max(total, 1)
+    med = float(np.median(spacings)) if spacings else float("nan")
+    print(f"   physical crop @ {FOV_MM:.0f}mm fits {fits}/{total} sampled series "
+          f"({pct:.0f}%) | median PixelSpacing {med:.3f} mm/px")
+    if pct < 50.0:
+        print("   !! FOV_MM mostly does NOT fit — the crop is largely a no-op and "
+              "any comparison against 0.7746 is meaningless. Lower FOV_MM.")
+    return pct
+
+
 def run_fold(fold: int) -> float:
     train_df = data[data["fold"] != fold]
     valid_df = data[data["fold"] == fold]
     print(f"\n=== fold {fold}: train {len(train_df)} / valid {len(valid_df)} ===")
 
-    # The physical-scale crop falls back to the raw frame whenever PixelSpacing
-    # is missing or FOV_MM does not fit. A high fallback rate means the change
-    # is a no-op that still looks correct, so print the split rather than
-    # assume it worked. Read this before trusting any AUC below.
-    from src.data.dicom import CROP_STATS, FOV_MM
-
-    CROP_STATS.update(cropped=0, fallback=0)
+    # Does the physical crop actually apply, or does FOV_MM never fit and make
+    # the whole thing a no-op? Measured directly here by reading headers, NOT
+    # by a counter inside physical_crop: the DataLoader runs num_workers=2, so
+    # a module-level counter increments in the worker processes and the parent
+    # reads zero. That is exactly what the first crop run reported, and it made
+    # the run uninterpretable. Header reads only — cheap, and in this process.
+    report_crop_coverage(train_df, n_sample=60)
 
     train_loader = DataLoader(
         KneeDataset(train_df, augment=True), batch_size=BATCH, shuffle=True,
@@ -263,17 +307,6 @@ def run_fold(fold: int) -> float:
             f"grouped-CV macro AUC {score:.4f}  ({time.time() - t0:.0f}s)"
         )
         print("   " + "  ".join(f"{k}:{v:.3f}" for k, v in per_label.items()))
-
-        if epoch == 0:
-            done = CROP_STATS["cropped"] + CROP_STATS["fallback"]
-            pct = 100.0 * CROP_STATS["cropped"] / max(done, 1)
-            print(
-                f"   physical crop @ {FOV_MM:.0f}mm: {pct:.1f}% of {done} slices cropped, "
-                f"{CROP_STATS['fallback']} fell back"
-            )
-            if pct < 50.0:
-                print("   !! FOV_MM rarely fits — this change is mostly a NO-OP. "
-                      "Lower FOV_MM or the comparison against 0.7746 is meaningless.")
 
         if score > best:
             best = score

@@ -276,9 +276,26 @@ def run(frame, partial_path=None):
         ) if len(prior) else frame_so_far
         combined.to_csv(partial_path, index=False)
 
+    crashes = 0
     for i in range(0, len(reports), BATCH):
         chunk = reports[i : i + BATCH]
-        scores = extract_batch(chunk)
+        # Two full-corpus runs have now died mid-pass with a 0-byte Kaggle log,
+        # taking the GPU hours with them. Whatever the cause (OOM on a long
+        # report, CUDA fragmentation), losing one batch of 4 is enormously
+        # cheaper than losing the run. Score the batch zero, clear the cache,
+        # and carry on — the count is printed loudly below, so this degrades
+        # visibly rather than silently.
+        try:
+            scores = extract_batch(chunk)
+        except Exception as exc:
+            crashes += 1
+            print(f"  !! batch at {i} failed ({type(exc).__name__}: {exc}) — "
+                  f"scored 0, continuing", flush=True)
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            scores = [{label: 0.0 for label in TARGETS} for _ in chunk]
         for uid, score in zip(uids[i : i + BATCH], scores):
             if all(v == 0.0 for v in score.values()):
                 failures += 1
@@ -292,6 +309,10 @@ def run(frame, partial_path=None):
     flush()
     print(f"  all-zero outputs: {failures}/{len(reports)} "
           f"(parse failures or genuinely normal studies)")
+    if crashes:
+        print(f"  !! {crashes} batch(es) CRASHED and were scored 0 — up to "
+              f"{crashes * BATCH} studies carry junk labels. Re-run this shard "
+              f"after deleting those rows if the count is material.")
 
     scored = pd.DataFrame(rows, columns=[ID_COLUMN, *TARGETS])
     if len(prior):
