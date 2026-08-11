@@ -8,7 +8,8 @@
   "enable_gpu": true,
   "enable_internet": true,
   "dataset_sources": [
-    "sibusisokhumalo11/knee-src"
+    "sibusisokhumalo11/knee-src",
+    "sibusisokhumalo11/knee-llm-partials"
   ],
   "competition_sources": [
     "rsna-knee-abnormality-detection"
