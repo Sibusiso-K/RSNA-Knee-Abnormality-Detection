@@ -43,7 +43,18 @@ launch() {
   rm -rf "$dir"; mkdir -p "$dir"
   cp "$REPO/kaggle/$name/kernel-metadata.json" "$dir/"
   bash "$REPO/kaggle/$name/build.sh" "$REPO" "$dir"
-  $KAGGLE kernels push -p "$dir" --accelerator NvidiaTeslaT4
+
+  # CPU kernels must NOT be given --accelerator. Passing it attaches a GPU and
+  # bills the 30 h/week quota for work that never touches CUDA -- which is the
+  # entire reason the preprocessing kernels exist. The metadata is the single
+  # source of truth for this, so read it rather than passing a second flag that
+  # could disagree with it.
+  if grep -q '"enable_gpu"[[:space:]]*:[[:space:]]*false' "$dir/kernel-metadata.json"; then
+    echo "launching $name on CPU (no GPU quota consumed)"
+    $KAGGLE kernels push -p "$dir"
+  else
+    $KAGGLE kernels push -p "$dir" --accelerator NvidiaTeslaT4
+  fi
 }
 
 case "${1:-}" in

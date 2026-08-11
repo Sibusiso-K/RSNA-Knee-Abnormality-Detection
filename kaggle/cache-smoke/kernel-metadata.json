@@ -1,0 +1,18 @@
+{
+  "id": "sibusisokhumalo11/knee-cache-smoke",
+  "title": "knee-cache-smoke",
+  "code_file": "script.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "sibusisokhumalo11/knee-src"
+  ],
+  "competition_sources": [
+    "rsna-knee-abnormality-detection"
+  ],
+  "kernel_sources": [],
+  "model_sources": []
+}
