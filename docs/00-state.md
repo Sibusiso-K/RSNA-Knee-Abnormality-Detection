@@ -8,10 +8,22 @@
 
 > ✅ **`knee-train-8ep` collected** — 8 epochs is not better than 4, see below.
 > ✅ **First leaderboard submission made — 0.783**, and CV transfers.
-> ❌ **`knee-llm-labels` v3 FAILED** after ~7.5 h — status `ERROR`, and its Kaggle log came
-> back **0 bytes**, so there is no stack trace. No `labels_llm_v1.csv`, no
-> `labels_ensemble_v1.csv`: the full-corpus stage produced nothing. **We still have no
-> ensemble labels for the corpus.** Relaunch with the sharded rewrite.
+> ⛔ **GPU quota exhausted (30 h/week)** as of 2026-08-11 04:45 UTC. Running sessions
+> survive it; new launches are refused. **Blocked: `train-hires` and LLM shard 2.**
+>
+> **LLM labels, sharded rewrite — 2,938 of 4,407 studies done (66.7%).**
+> Shard 0 ✅ 1,469 · shard 1 ✅ 1,469 · shard 2 ⛔ 1,469 remaining (quota).
+> Partials published privately as `knee-llm-partials`. **No `labels_ensemble_v1.csv`
+> yet** — it is gated on full corpus coverage by design, so there is still nothing to
+> retrain against.
+>
+> The design earned its keep: shard 0 errored at 1,200/1,469, the chunked partial
+> survived, and the relaunch resumed and finished the remaining 269 instead of redoing
+> ~2 h. The pre-sharding code lost an entire ~7.5 h run to the same class of failure.
+>
+> ⚠️ At 30 h/week a single 4-epoch run is ~1/8 of the budget — roughly 6–7 experiments
+> per week. Spend them on untested levers, not tweaks: the 160 mm crop cost 4 h to
+> learn nothing (0.7767 vs 0.7746).
 **Days to final submission (2026-10-22):** ~73
 
 ---
