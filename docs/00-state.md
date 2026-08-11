@@ -77,7 +77,32 @@ epochs, but the file itself does not say so. Provenance is not retroactive.
 **First submission, 2026-08-10: public LB `0.783`** (submission `55411501`, fold-0 `knee-model-v1`,
 rule-only labels). Site-grouped CV for the same checkpoint was **0.7746**.
 
-**The LB came in +0.008 above CV.** That settles a question this file previously listed as open.
+### ⚠️ Two calibration points now, and they disagree — do not trust a fixed offset
+
+| Submission | CV | LB | offset |
+|---|---|---|---|
+| v1 fold 0, 16/224 | 0.7746 | **0.783** | +0.0084 |
+| v2 fold 0 + 160 mm crop | 0.7767 | **0.781** | +0.0043 |
+
+**CV went up (+0.0021) while LB went down (−0.002).** The offset is not a constant, and the
+ordering does not even survive: the model with the better CV scored worse on the leaderboard.
+
+What this does and does not license:
+
+- ✅ **CV predicts LB at coarse resolution.** Both land at ~0.78. Grouped CV is not lying to us,
+  and it is still the right instrument for deciding whether something works.
+- ❌ **CV cannot resolve differences of ~0.005 or less.** Neither can a single LB score. Anything
+  in that band is noise in *both* instruments, so "CV improved by 0.002" means nothing.
+- ❌ **Do not convert CV to an expected LB rank using a fixed offset.** An earlier version of this
+  file did exactly that off n=1; with n=2 the offsets differ by a factor of two.
+
+**Planning consequence:** only pursue changes plausibly worth **≫0.01**. At 30 h GPU/week, a 4-epoch
+run costs ~1/8 of the budget, and a change worth 0.002 is indistinguishable from doing nothing —
+which is precisely what the 160 mm crop turned out to be. It is now **confirmed dead**: better CV,
+worse LB, no effect.
+
+**The LB came in +0.008 above CV** on the first submission. That settled a question this file
+previously listed as open.
 The earlier reasoning went: our CV might badly *understate* us, because (a) it scores against noisy
 report-derived labels, and (b) it holds out entire scanner sites while the hidden test may not.
 Either effect would have put the LB well above 0.7746. **Neither did. That hypothesis is dead.**
