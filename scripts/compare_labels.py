@@ -120,16 +120,40 @@ def load_candidate(path: str) -> pd.DataFrame | None:
 
 
 def rank_normalise(frame: pd.DataFrame) -> pd.DataFrame:
-    """Map each target column to [0,1] by rank.
+    """Map each target column to [0,1] by rank. **For SCORING only.**
 
     Blending raw scores across sources assumes they share a scale, and they do
     not: one emits calibrated probabilities, another 0/1, another 0.5 for "not
     addressed". AUC reads order only, so ranking first makes a mean meaningful.
+
+    ⚠️ **Never train against the output of this.** Rank percentiles are not
+    probabilities. Roughly 25% of cells are the labeller saying "the report does
+    not address this", which ties into one enormous block, and `rank(pct=True)`
+    hands every member of a tied block the block's MID rank. So a study the
+    report explicitly called negative comes out near 0.3, not near 0 — and BCE
+    against 0.3 teaches the model that a confident negative is a third
+    positive. The ranking is unaffected, so this is invisible to every AUC
+    number in this script and would only show up as a flat, miscalibrated
+    model. Use `probability_blend` for targets.
     """
     out = frame.copy()
     for target in TARGETS:
         out[target] = out[target].rank(pct=True)
     return out
+
+
+def probability_blend(frames: list[pd.DataFrame], ids: list[str]) -> pd.DataFrame:
+    """Plain mean of the raw values. **This is what training consumes.**
+
+    Every source here emits something already on a probability scale — an
+    explicit 0/1, a hedged 0.3-0.8, or 0.5 for "not addressed" — so averaging
+    them preserves the meaning of the number instead of replacing it with a
+    position in a queue. A cell all three sources call 0 stays 0.
+    """
+    stack = [f.set_index(ID).loc[ids][list(TARGETS)].values for f in frames]
+    blend = pd.DataFrame(np.nanmean(stack, axis=0), columns=list(TARGETS))
+    blend.insert(0, ID, ids)
+    return blend
 
 
 def main() -> None:
@@ -183,9 +207,37 @@ def main() -> None:
             print(f"  {r['source']}  macro {r['macro']:.4f}  -> {r['verdict']}")
         print()
 
-    # Blend the strongest few. Rank-mean rather than mean: see rank_normalise.
-    top = [r["source"] for _, r in usable_table.head(3).iterrows()
-           if r["macro"] == r["macro"]]
+    # Best file from each SOURCE DATASET, not the best three files overall.
+    #
+    # Ranking by score alone picks three variants by one author, which is three
+    # readings of one labeller's idiosyncrasies rather than three independent
+    # opinions. Averaging correlated sources cancels almost nothing. Taking one
+    # per author keeps the diversity that makes an ensemble worth building —
+    # and on 58 studies the score differences between the candidates are not
+    # resolvable anyway, so choosing the top three by score is fitting noise.
+    best_per_author: dict[str, tuple[float, str]] = {}
+    for _, r in usable_table.iterrows():
+        if r["macro"] != r["macro"]:
+            continue
+        author = str(r["source"]).replace("\\", "/").split("/")[0]
+        if author not in best_per_author or r["macro"] > best_per_author[author][0]:
+            best_per_author[author] = (r["macro"], r["source"])
+    ranked_authors = sorted(best_per_author.values(), reverse=True)
+    # Diversity only pays when the sources are comparably good. A source well
+    # below the best contributes more of its own error than of independent
+    # signal — measured: adding our 0.7565 lexicon labels to the blend moved it
+    # 0.8904 -> 0.8797. The cut is at 0.05, comfortably outside the ~0.02 that
+    # 58 studies can resolve, so it excludes only differences that are real.
+    ceiling = ranked_authors[0][0] if ranked_authors else 0.0
+    top = [name for macro, name in ranked_authors if ceiling - macro <= 0.05][:4]
+    dropped = [(m, n) for m, n in ranked_authors if ceiling - m > 0.05]
+    print("=== one source per author (diversity beats a 58-study ranking) ===")
+    for name in top:
+        print(f"  + {name}")
+    for macro, name in dropped:
+        print(f"  - {name} ({macro:.4f}, {ceiling - macro:.3f} below best — "
+              f"adds error, not diversity)")
+    print()
     if len(top) >= 2:
         ids = set(candidates[top[0]][ID])
         for name in top[1:]:
@@ -195,18 +247,29 @@ def main() -> None:
         for name in top:
             frame = candidates[name].set_index(ID).loc[ids].reset_index()
             stack.append(rank_normalise(frame)[TARGETS].values)
-        blend = pd.DataFrame(np.mean(stack, axis=0), columns=list(TARGETS))
-        blend.insert(0, ID, ids)
-        macro, per_label, n = macro_auc_vs_gold(gold, blend)
-        print(f"=== rank-mean blend of top {len(top)} ===")
+        ranked = pd.DataFrame(np.mean(stack, axis=0), columns=list(TARGETS))
+        ranked.insert(0, ID, ids)
+        macro, per_label, n = macro_auc_vs_gold(gold, ranked)
+        print(f"=== rank-mean blend of top {len(top)} (scoring) ===")
         for name in top:
             print(f"  + {name}")
-        print(f"  macro {macro:.4f} on {n} gold studies, {len(blend)} studies covered")
+        print(f"  macro {macro:.4f} on {n} gold studies, {len(blend_ids := ids) and len(ids)} covered")
         print("  per label: "
               + "  ".join(f"{k}:{v:.3f}" for k, v in sorted(per_label.items())))
+
+        # The file training actually consumes. Scored separately, because a
+        # blend that ranks well and is calibrated badly is still a bad target.
+        prob = probability_blend([candidates[name] for name in top], ids)
+        prob_macro, _pl, _n = macro_auc_vs_gold(gold, prob)
+        decisive = float(np.mean(np.abs(prob[list(TARGETS)].values - 0.5) >= 0.05))
+        print(f"=== probability-mean blend (training targets) ===")
+        print(f"  macro {prob_macro:.4f}  |  cells the report committed on: "
+              f"{decisive:.1%}")
+        print(f"  target range [{prob[list(TARGETS)].values.min():.3f}, "
+              f"{prob[list(TARGETS)].values.max():.3f}]")
         if args.out:
-            blend.to_csv(args.out, index=False)
-            print(f"  wrote {args.out}")
+            prob.to_csv(args.out, index=False)
+            print(f"  wrote {args.out} (probabilities, NOT ranks)")
 
 
 if __name__ == "__main__":
