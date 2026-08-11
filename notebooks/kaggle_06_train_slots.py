@@ -257,20 +257,38 @@ def predict(model, rows):
     return np.concatenate(out) if out else np.zeros((0, len(TARGETS)), np.float32)
 
 
+def find_dinov2():
+    """Locate a mounted DINOv2 checkpoint directory, or fail loudly.
+
+    Deliberately does NOT fall back to "any directory containing a
+    config.json". An earlier version did, and that is a silent-wrong-answer
+    bug: it would happily hand `AutoModel.from_pretrained` some unrelated
+    model, which loads, trains, and produces a plausible-looking score from an
+    encoder nobody chose. Not finding the weights must stop the run.
+    """
+    for base in (INPUT, ".", ".."):
+        if not os.path.isdir(base):
+            continue
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs
+                       if d not in ("train_series", "test_series", ".git")]
+            if "config.json" in files and "dinov2" in root.lower():
+                return root
+    raise SystemExit(
+        "DINOv2 weights not found. Attach metaresearch/dinov2 (Models), or "
+        "place the checkpoint in a directory whose path contains 'dinov2'."
+    )
+
+
+DINOV2 = find_dinov2()
+log(f"encoder: {DINOV2}")
+
+
 def run_fold(fold):
     train_df = frame[frame["fold"] != fold]
     valid_df = frame[frame["fold"] == fold]
     log(f"\n=== fold {fold}: train {len(train_df)} / valid {len(valid_df)} ===")
-
-    dinov2 = find_dir("config.json")
-    for root, dirs, files in os.walk(INPUT if os.path.isdir(INPUT) else "."):
-        dirs[:] = [d for d in dirs if d not in ("train_series", "test_series")]
-        if "config.json" in files and "dinov2" in root.lower():
-            dinov2 = root
-            break
-    if dinov2 is None:
-        raise SystemExit("DINOv2 weights not attached")
-    log(f"encoder: {dinov2}")
+    dinov2 = DINOV2
 
     model = SlotNet(dinov2, unfreeze_last=UNFREEZE_LAST, pool=POOL).to(device)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
