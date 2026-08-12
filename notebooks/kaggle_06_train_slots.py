@@ -292,7 +292,13 @@ def run_fold(fold):
 
     model = SlotNet(dinov2, unfreeze_last=UNFREEZE_LAST, pool=POOL).to(device)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    log(f"trainable params: {trainable / 1e6:.1f}M")
+    # Log the hidden size, not just the path. "small" and "base" mount at
+    # similar-looking paths, differ by 2x in feature width and ~4x in
+    # activation memory, and both run — so the only way to know afterwards
+    # which one a checkpoint came from is to have written it down.
+    log(f"encoder hidden size {model.vit.config.hidden_size} "
+        f"({len(model.vit.encoder.layer)} blocks, last {UNFREEZE_LAST} open) "
+        f"| trainable {trainable / 1e6:.1f}M | pool {POOL}")
 
     optimizer = torch.optim.AdamW(
         model.param_groups(LR_HEAD, LR_BACKBONE), weight_decay=WEIGHT_DECAY

@@ -80,9 +80,50 @@
 > cache build now audits geometry-derived laterality against the `Laterality` tag,
 > because a mirror applied to the wrong half of the corpus is strictly worse than none.
 >
+> ### ✅ `knee-cache` built — 4,407 studies, 8.96 GB, 1h58m, zero GPU quota
+>
+> Measured on the **full corpus**, not a sample:
+>
+> | | |
+> |---|---|
+> | Studies cached | 4,407 / 4,407 |
+> | Laterality unresolved | **13 (0.3%)** |
+> | Tag vs geometry agreement | **11,503 / 11,715 (98.2%)** |
+> | Series geometry resolves that have **no** tag | **12,229** |
+> | Physical crop applied | 19,710 / 19,751 (**100%**) |
+> | Slot fill | 0.747 overall |
+>
+> Per slot: SAG_FLUID_FS 0.932 · COR_FLUID_FS 0.956 · AX_FLUID_FS 0.904 ·
+> SAG_FLUID_NOFS 0.579 · COR_T1 0.637 · SAG_T1 0.475.
+>
+> **L=2,067 R=2,327 — 47% of the corpus was being fed to the encoder mirrored.** And
+> geometry resolves *more* series (12,229) than carry a `Laterality` tag at all (11,909),
+> so it more than doubled coverage rather than merely reproducing the tag. Where the two
+> disagree (212 series, 1.8%) the tag wins, which is the safe default.
+>
+> The three structural slots carry 47–64% coverage. Those series existed all along and
+> `pick_series` discarded every one of them.
+>
+> ### Training is written, dry-run, and blocked only on quota
+>
+> The whole chain was exercised locally on CPU against the 40-study smoke cache with
+> DINOv2-small: cache → label alignment → grouped folds → train → checkpoint → reload
+> `strict=True` → forward with a partially masked study. 11.0M trainable parameters.
+> **The AUC from that run is meaningless and is not recorded** — 11 validation studies,
+> one epoch. It proves the plumbing, nothing else.
+>
+> ⛔ `kaggle kernels push` returns **"Maximum weekly GPU quota of 30.00 hours reached"**
+> and creates no kernel version, so retrying the push is a clean, spam-free way to poll
+> for the reset. Reset timing is genuinely unclear — public sources disagree between
+> Saturday and Sunday 00:00 UTC, Kaggle has a "floating" quota feature, and the settings
+> tooltip does not say. Do not write a date here until one is observed.
+>
+> ⛔ **Lightning AI is not an option on the free tier: 0 credits** across org, unallocated
+> and total, with no personal account holding a separate allowance. Confirmed 2026-08-12.
+>
 > **Not yet known:** whether any of this moves the leaderboard. Nothing has been trained
-> on the new representation. The numbers above are input-quality measurements, and
-> `docs/00-state.md` has three times recorded a label improvement that did not transfer.
+> on the new representation. The numbers above are input-quality measurements, and this
+> file has three times recorded a label improvement that did not transfer.
 
 **Days to final submission (2026-10-22):** ~72
 

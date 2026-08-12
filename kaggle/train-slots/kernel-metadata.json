@@ -18,6 +18,6 @@
     "sibusisokhumalo11/knee-cache"
   ],
   "model_sources": [
-    "metaresearch/dinov2/pyTorch/base/1"
+    "metaresearch/dinov2/pyTorch/small/1"
   ]
 }
