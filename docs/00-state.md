@@ -104,6 +104,25 @@
 > The three structural slots carry 47–64% coverage. Those series existed all along and
 > `pick_series` discarded every one of them.
 >
+> ### ✅ Cache audited on free CPU — every check green
+>
+> | Check | Result |
+> |---|---|
+> | Studies with zero usable slots | **0** |
+> | Slots per study | mean 4.48, min **2**, max 6 |
+> | Scanner fingerprint groups | **152 / 4,407 (ratio 0.034)**, 42 singletons |
+> | Largest groups | 353, 258, 237, 217, 214 — top-20 cover 65.1% |
+> | Gold studies present | **58 / 58** |
+> | Label merge (`labels_blend_v1`) | 4,406 / 4,407 |
+> | Training pool after gold holdout | **4,349** |
+> | Fold sizes | 870/870/870/870/869 — ratio **1.00** |
+>
+> **152 groups, not 3,229.** That is the check worth having run: reusing `_clean_tag`'s
+> whole-MHz rounding of `ImagingFrequency` kept the grouping coarse. A near-unique
+> fingerprint degrades GroupKFold to random KFold and returns the 0.053 of site leakage
+> as free-looking score, and it would be invisible — the run completes and prints a
+> better number. 4,349 also matches the historical grouped-CV pool exactly.
+>
 > ### Training is written, dry-run, and blocked only on quota
 >
 > The whole chain was exercised locally on CPU against the 40-study smoke cache with
