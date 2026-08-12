@@ -144,6 +144,43 @@
 > on the new representation. The numbers above are input-quality measurements, and this
 > file has three times recorded a label improvement that did not transfer.
 >
+> ### ✅ Run 1 (TPU): CV 0.7948 / gold58 0.8105 — and 20 epochs does NOT help
+>
+> | Schedule | best CV | gold58 | wall |
+> |---|---|---|---|
+> | 10 epochs | **0.7948** | **0.8105** | 30 min |
+> | 20 epochs | 0.7964 | 0.8090 | 57 min |
+>
+> +0.0016 for double the training: inside noise. The 20-epoch curve plateaus at
+> epoch ~5 (0.7885) and oscillates 0.786–0.793 for fourteen more epochs while loss
+> falls 0.550 → 0.436. **Same overfitting signature the old pipeline had.** Training
+> length is saturated and is not the binding constraint. Do not revisit.
+>
+> Per-label at 10 epochs: Baker's 0.845 · Medial OA 0.832 · Effusion 0.831 ·
+> Synovitis 0.825 · Fracture 0.815 · Contusion 0.813 · Medial Meniscus 0.812 ·
+> ACL 0.782 · Lateral OA 0.771 · Lateral Meniscus 0.754 · MCL 0.747 · **PF OA 0.711**.
+>
+> ⚠️ **0.7948 is NOT comparable to the old 0.7746.** Different labels (blend 0.8930 vs
+> rule-only 0.7565) and a different validation target (undecided cells dropped).
+>
+> ⚠️ **Do not reuse the +0.008 CV→LB offset.** It was measured on the old pipeline with
+> old labels against a different target. What CV 0.7948 maps to on the leaderboard is
+> genuinely unknown until a submission lands. **`gold58` is the better LB predictor** —
+> it is scored against real annotations, as the leaderboard is — but on 58 studies it
+> carries ±0.05 easily.
+>
+> ### Cost model on TPU (measured)
+>
+> | | |
+> |---|---|
+> | Startup (mount + load 8.34 GB + folds) | ~98 s |
+> | Step (batch 8 = 48 slot images) | ~0.35 s |
+> | Epoch (434 steps + validation) | ~160 s |
+> | 10-epoch fold | **~30 min** |
+>
+> A fold costs ~2.5% of the weekly TPU budget, so experiments are cheap now. The
+> binding cost is no longer compute.
+>
 > ### Experiment queue, in priority order
 >
 > **Run 1 is a measurement, not an attempt to win.** Its job is to produce one honest
