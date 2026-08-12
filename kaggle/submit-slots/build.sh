@@ -17,3 +17,5 @@ grep -q 'from src.data.cache import' "$2/script.py" || { echo "must build the te
 grep -q 'submission.to_csv("submission.csv", index=False)' "$2/script.py" || { echo "must write submission.csv" >&2; exit 1; }
 grep -q 'write_and_exit' "$2/script.py" || { echo "degraded-mode fallback missing: a raising notebook burns a submission slot for nothing" >&2; exit 1; }
 grep -q 'still the 0.5 default' "$2/script.py" || { echo "missing the constant-submission tripwire" >&2; exit 1; }
+
+grep -q "find_dinov2(want_hidden)" "$2/script.py" || { echo "encoder must be selected by matching the checkpoint hidden size, not by mount order" >&2; exit 1; }

@@ -115,19 +115,54 @@ try:
 
     from src.model.slotnet import SlotNet
 
-    dinov2 = None
-    for root, dirs, files in os.walk(INPUT):
-        dirs[:] = [d for d in dirs if d not in ("train_series", "test_series")]
-        if "config.json" in files and "dinov2" in root.lower():
-            dinov2 = root
-            break
-    if dinov2 is None:
-        write_and_exit("DINOv2 weights not attached")
+    def find_dinov2(hidden=None):
+        """Locate a mounted DINOv2 whose width matches the checkpoint.
+
+        Matching on `hidden_size` rather than taking the first hit is the fix
+        for a real failure: the submission kernel mounted DINOv2-**base**
+        (768) while the checkpoint had been trained on **small** (384), and
+        load_state_dict died on every parameter. That one failed loudly only
+        because the shapes disagree — if two variants ever share a width, the
+        first-hit version would load the wrong weights silently and score a
+        plausible-looking number from an encoder nobody chose.
+        """
+        candidates = []
+        for root, dirs, files in os.walk(INPUT):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            if "config.json" in files and "dinov2" in root.lower():
+                try:
+                    import json
+
+                    with open(os.path.join(root, "config.json")) as fh:
+                        size = int(json.load(fh).get("hidden_size", -1))
+                except Exception:
+                    size = -1
+                candidates.append((root, size))
+        if not candidates:
+            return None
+        log(f"dinov2 candidates: {candidates}")
+        if hidden is not None:
+            for root, size in candidates:
+                if size == hidden:
+                    return root
+            log(f"!! no mounted DINOv2 has hidden_size {hidden}; "
+                f"attach the matching variant")
+            return None
+        return candidates[0][0]
 
     checkpoints = sorted(glob.glob(f"{INPUT}/**/knee_slot_fold*.pth", recursive=True))
     if not checkpoints:
         write_and_exit("no checkpoints found")
     log(f"checkpoints: {[os.path.basename(c) for c in checkpoints]}")
+
+    # The checkpoint decides which encoder is correct, not the metadata.
+    probe = torch.load(checkpoints[0], map_location="cpu", weights_only=False)
+    want_hidden = int(probe["model"]["vit.embeddings.cls_token"].shape[-1])
+    log(f"checkpoint expects encoder hidden size {want_hidden}")
+
+    dinov2 = find_dinov2(want_hidden)
+    if dinov2 is None:
+        write_and_exit(f"no mounted DINOv2 with hidden_size {want_hidden}")
 
     models = []
     for path in checkpoints:
