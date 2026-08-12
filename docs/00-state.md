@@ -124,6 +124,30 @@
 > **Not yet known:** whether any of this moves the leaderboard. Nothing has been trained
 > on the new representation. The numbers above are input-quality measurements, and this
 > file has three times recorded a label improvement that did not transfer.
+>
+> ### Experiment queue, in priority order
+>
+> **Run 1 is a measurement, not an attempt to win.** Its job is to produce one honest
+> grouped-CV number on the new representation so everything after it has a baseline to
+> be compared against. Do not stack changes onto it.
+>
+> | # | Change | Cost | Why it is where it is |
+> |---|---|---|---|
+> | 1 | Fold 0, DINOv2-small, 10 ep | 1 fold | The baseline. Nothing else is interpretable without it. |
+> | 2 | 5-fold ensemble | 5 folds | The public 0.899 is a *single* model. Folds are the most reliable gain in the list. |
+> | 3 | Label-correlation post-processing | **free** | Macro AUC is per-label and rank-based, so no calibration is needed — but predicted Effusion may rank Synovitis better than predicted Synovitis does (0.7115 vs 0.6780 *on labels*). Pure post-processing, testable on existing predictions. |
+> | 4 | Cache v2: more slices/slot (N_GROUP 2–3) | **free CPU** + folds | The public baseline is stuck at 3 slices by Kaggle RAM. We are not: the cache is built offline. Buys stack augmentation in training and averaging at inference. |
+> | 5 | DINOv2-base | folds | 2x feature width, ~4x activation memory. May need BATCH 4. |
+> | 6 | Higher resolution (448 = 14x32) | **free CPU** + folds | 0.29 mm/px. Only after 4 shows more input helps. |
+>
+> **Do not reorder 3 and 4 ahead of 2.** Both are attractive because they are cheap, and
+> both change the input or the output rather than the amount of training — which is
+> exactly the class of change this project has repeatedly measured at ~0.002.
+>
+> **A note on calibration, so nobody spends time on it:** the metric is macro AUC over
+> twelve *independent* per-label AUCs. AUC reads order only. So per-label calibration,
+> temperature scaling and threshold tuning are all worth exactly zero here. Only the
+> within-label ranking matters.
 
 **Days to final submission (2026-10-22):** ~72
 
