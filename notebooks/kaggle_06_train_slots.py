@@ -106,9 +106,37 @@ AUG_ROT_DEG, AUG_SCALE, AUG_SHIFT, AUG_INTENSITY = 8.0, 0.08, 0.05, 0.10
 # a coerced 0 would measure how well the model reproduces silence.
 UNDECIDED = 0.05
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-log(f"device: {device}  torch {torch.__version__}")
-if device.type == "cuda":
+# --- device: CUDA, XLA/TPU, or CPU --------------------------------------
+# One script for all three. The model, labels, folds and gold holdout are the
+# parts that must not diverge between runs, so they stay shared; only the four
+# lines that differ per backend are branched.
+#
+# TPU is not a fallback here. Measured 2026-08-12 on a Kaggle v5e-8: both
+# risky ops lower (grid_sample, topk), and one core sustains 63.6 study/s
+# warm after a ~10 s compile. The 20 h/week TPU quota is also on a completely
+# separate budget from the GPU's 30 h.
+XLA = False
+xm = None
+if os.environ.get("USE_XLA", "auto") != "0":
+    try:
+        import torch_xla.core.xla_model as _xm
+
+        xm = _xm
+        device = xm.xla_device()
+        XLA = True
+    except Exception:
+        XLA = False
+
+if not XLA:
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+log(f"device: {device}  torch {torch.__version__}  XLA={XLA}")
+if XLA:
+    import torch_xla
+
+    log(f"torch_xla {getattr(torch_xla, '__version__', '?')} | "
+        f"cores visible {len(xm.get_xla_supported_devices())} (using one)")
+elif device.type == "cuda":
     log(f"gpu: {torch.cuda.get_device_name(0)}  "
         f"{torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
 
@@ -122,13 +150,41 @@ index = pd.concat(
     [pd.read_csv(p) for p in sorted(glob.glob(f"{cache_dir}/index_train_*.csv"))],
     ignore_index=True,
 )
-cache = np.concatenate(
-    [np.load(p) for p in sorted(glob.glob(f"{cache_dir}/cache_train_*.npy"))]
-)
-mask = np.concatenate(
-    [np.load(p) for p in sorted(glob.glob(f"{cache_dir}/mask_train_*.npy"))]
-)
-log(f"cache {cache.shape} {cache.nbytes / 1024**3:.2f} GB | index {len(index)}")
+def load_shards(pattern, mmap=False):
+    """Concatenate shards — but never copy a single one.
+
+    `np.concatenate` always allocates a new array, so wrapping a lone 8.96 GB
+    shard in it doubles peak RAM to ~18 GB to produce a byte-identical result.
+    With one shard (the current layout) this returns the array as loaded.
+    """
+    paths = sorted(glob.glob(pattern))
+    if not paths:
+        raise SystemExit(f"no shards matched {pattern}")
+    if len(paths) == 1:
+        return np.load(paths[0], mmap_mode="r" if mmap else None)
+    return np.concatenate([np.load(p) for p in paths])
+
+
+try:
+    with open("/proc/meminfo") as fh:
+        avail_gb = int(
+            dict(l.split(":", 1) for l in fh if ":" in l)["MemAvailable"].split()[0]
+        ) / 1024 ** 2
+    log(f"host memory available: {avail_gb:.1f} GB")
+except Exception:
+    avail_gb = float("inf")
+
+# Fall back to a memory map when the cache would not comfortably fit. Random
+# gathers from a network-mounted mmap are much slower than from RAM, so this
+# is a last resort that keeps the run alive rather than a default.
+MMAP = avail_gb < 14.0
+if MMAP:
+    log("!! low host memory — falling back to mmap; expect slower steps")
+
+cache = load_shards(f"{cache_dir}/cache_train_*.npy", mmap=MMAP)
+mask = load_shards(f"{cache_dir}/mask_train_*.npy")
+log(f"cache {cache.shape} {cache.nbytes / 1024**3:.2f} GB "
+    f"({'mmap' if MMAP else 'RAM'}) | index {len(index)}")
 if not (len(index) == len(cache) == len(mask)):
     raise SystemExit(
         f"cache/index length mismatch: index {len(index)} cache {len(cache)} "
@@ -243,6 +299,18 @@ def macro_auc(y_true, y_pred, drop_undecided=True):
     return macro, per_label
 
 
+def autocast():
+    """Mixed precision per backend.
+
+    CUDA gets fp16 with a GradScaler. XLA gets bf16, which has fp32's exponent
+    range and therefore needs no loss scaling at all — the GradScaler exists to
+    stop fp16 gradients underflowing, and bf16 does not underflow the same way.
+    """
+    if XLA:
+        return torch.autocast("xla", dtype=torch.bfloat16)
+    return torch.autocast("cuda", enabled=device.type == "cuda")
+
+
 @torch.no_grad()
 def predict(model, rows):
     model.eval()
@@ -251,9 +319,12 @@ def predict(model, rows):
         sel = rows[start : start + BATCH]
         x = torch.from_numpy(cache[sel]).to(device)
         m = torch.from_numpy(mask[sel]).float().to(device)
-        with torch.autocast("cuda", enabled=device.type == "cuda"):
+        with autocast():
             logits = model(x, m, TRAIN_SIZE).float()
-        out.append(torch.sigmoid(logits).cpu().numpy())
+        probs = torch.sigmoid(logits)
+        if XLA:
+            xm.mark_step()
+        out.append(probs.cpu().numpy())
     return np.concatenate(out) if out else np.zeros((0, len(TARGETS)), np.float32)
 
 
@@ -310,7 +381,7 @@ def run_fold(fold):
         optimizer, max_lr=[LR_BACKBONE, LR_HEAD],
         total_steps=EPOCHS * steps + EPOCHS,
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
+    scaler = torch.amp.GradScaler("cuda", enabled=(not XLA) and device.type == "cuda")
     criterion = nn.BCEWithLogitsLoss()
 
     train_rows = train_df["row"].values
@@ -323,7 +394,7 @@ def run_fold(fold):
     for epoch in range(EPOCHS):
         model.train()
         order = np.random.permutation(len(train_rows))
-        total, t_epoch = 0.0, time.time()
+        running, t_epoch = None, time.time()
         for step in range(steps):
             sel = order[step * BATCH : (step + 1) * BATCH]
             if len(sel) == 0:
@@ -334,22 +405,37 @@ def run_fold(fold):
             y = torch.from_numpy(train_y[sel]).to(device)
 
             x = augment(x)
-            with torch.autocast("cuda", enabled=device.type == "cuda"):
+            with autocast():
                 # Soft targets are used as-is. BCE against a target of 0.28
                 # expresses "probably absent but the report did not say", which
                 # is the information a hard 0 throws away.
                 loss = criterion(model(x, m, TRAIN_SIZE), y)
-            scaler.scale(loss).backward()
-            scaler.step(optimizer)
-            scaler.update()
+
+            if XLA:
+                loss.backward()
+                # xm.optimizer_step, not optimizer.step: on XLA this is what
+                # materialises the graph and applies the update. It also
+                # inserts the cross-replica reduction, which is a no-op on one
+                # core but is what makes the same line correct on eight.
+                xm.optimizer_step(optimizer)
+            else:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
             scheduler.step()
             optimizer.zero_grad(set_to_none=True)
-            total += float(loss.item())
-            if step % 50 == 0:
-                log(f"  e{epoch} {step}/{steps} loss {loss.item():.4f}")
 
+            # Accumulate on-device. `.item()` forces a host sync, and on XLA
+            # that stalls the pipeline every step for a number only printed
+            # every fiftieth — which turns a compute-bound loop into a
+            # latency-bound one.
+            running = loss.detach() if running is None else running + loss.detach()
+            if step % 50 == 0:
+                log(f"  e{epoch} {step}/{steps} loss {float(loss.item()):.4f}")
+
+        epoch_loss = float(running.item()) / max(steps, 1) if running is not None else float("nan")
         score, per_label = macro_auc(valid_y, predict(model, valid_rows))
-        line = (f"  epoch {epoch}: loss {total / max(steps, 1):.4f}  "
+        line = (f"  epoch {epoch}: loss {epoch_loss:.4f}  "
                 f"grouped-CV macro AUC {score:.4f}  ({time.time() - t_epoch:.0f}s)")
         if len(gold_rows):
             gold_pred = predict(model, gold_rows)
@@ -361,9 +447,16 @@ def run_fold(fold):
 
         if score > best:
             best = score
+            # On XLA the state dict holds device tensors. Move to CPU before
+            # saving so the checkpoint loads anywhere - the submission notebook
+            # runs on a GPU and must not need torch_xla to read this file.
+            state = model.state_dict()
+            if XLA:
+                state = {k: v.cpu() for k, v in state.items()}
             torch.save(
                 {
-                    "model": model.state_dict(),
+                    "model": state,
+                    "device": "xla" if XLA else device.type,
                     "encoder": os.path.basename(dinov2),
                     "variant": VARIANT, "pool": POOL, "size": TRAIN_SIZE,
                     "slots": [s[0] for s in SLOTS],
