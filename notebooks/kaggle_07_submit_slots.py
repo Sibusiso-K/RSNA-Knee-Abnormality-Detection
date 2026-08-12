@@ -49,6 +49,13 @@ INPUT = "/kaggle/input"
 ID = "StudyInstanceUID"
 
 
+#: Never descended into while searching by content. `test_series/` holds the
+#: hidden test DICOMs across thousands of nested directories; walking it cost
+#: ~1,100 s per call on the training side, and here that comes straight off the
+#: 9 h submission cap. The markers we look for are never inside it.
+SKIP_DIRS = {"train_series", "test_series", ".git", "__pycache__"}
+
+
 def find_dir(marker, max_depth=5):
     if not os.path.isdir(INPUT):
         return None
@@ -64,6 +71,8 @@ def find_dir(marker, max_depth=5):
         if marker in entries:
             return directory
         for entry in entries:
+            if entry in SKIP_DIRS:
+                continue
             path = os.path.join(directory, entry)
             if os.path.isdir(path):
                 stack.append((path, depth + 1))
