@@ -45,6 +45,16 @@ PKG = "/kaggle/working/pkg"
 INPUT = "/kaggle/input"
 
 
+#: Directories never descended into while searching by content.
+#:
+#: `train_series/` holds 819,640 DICOM files across ~22,000 nested directories.
+#: Walking it costs REAL MONEY here: measured on the first TPU run, two
+#: find_dir calls spent ~1,100 s each traversing it — ~37 minutes of a 20 h/week
+#: quota, before a single training step. The markers we look for are never
+#: inside it.
+SKIP_DIRS = {"train_series", "test_series", ".git", "__pycache__"}
+
+
 def find_dir(marker, max_depth=6):
     """Locate a directory by CONTENT. See kaggle_02_train.py for why."""
     roots = [INPUT, ".", "..", "/teamspace/studios/this_studio", "/data"]
@@ -63,6 +73,8 @@ def find_dir(marker, max_depth=6):
             if marker in entries:
                 return directory
             for entry in entries:
+                if entry in SKIP_DIRS:
+                    continue
                 path = os.path.join(directory, entry)
                 if os.path.isdir(path):
                     stack.append((path, depth + 1))
@@ -341,8 +353,7 @@ def find_dinov2():
         if not os.path.isdir(base):
             continue
         for root, dirs, files in os.walk(base):
-            dirs[:] = [d for d in dirs
-                       if d not in ("train_series", "test_series", ".git")]
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             if "config.json" in files and "dinov2" in root.lower():
                 return root
     raise SystemExit(
@@ -413,11 +424,21 @@ def run_fold(fold):
 
             if XLA:
                 loss.backward()
-                # xm.optimizer_step, not optimizer.step: on XLA this is what
-                # materialises the graph and applies the update. It also
-                # inserts the cross-replica reduction, which is a no-op on one
-                # core but is what makes the same line correct on eight.
+                # xm.optimizer_step inserts the cross-replica reduction (a
+                # no-op on one core, correct on eight) and applies the update.
                 xm.optimizer_step(optimizer)
+                # mark_step is NOT optional and NOT implied by the line above:
+                # xm.optimizer_step defaults to barrier=False and does not cut
+                # the graph. Without this, XLA keeps tracing lazily and the
+                # graph grows until something forces evaluation — which here
+                # was loss.item() every 50 steps, so it compiled FIFTY steps of
+                # training as one graph. Measured cost of omitting it: 12.2
+                # s/step instead of 0.12, then
+                #   "Ran out of memory in memory space hbm.
+                #    Used 16.36G of 15.75G"
+                # The probe did not hit this only because it passed
+                # barrier=True, which calls mark_step internally.
+                xm.mark_step()
             else:
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
