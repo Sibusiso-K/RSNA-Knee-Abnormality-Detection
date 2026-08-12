@@ -49,8 +49,14 @@ launch() {
   # entire reason the preprocessing kernels exist. The metadata is the single
   # source of truth for this, so read it rather than passing a second flag that
   # could disagree with it.
-  if grep -q '"enable_gpu"[[:space:]]*:[[:space:]]*false' "$dir/kernel-metadata.json"; then
-    echo "launching $name on CPU (no GPU quota consumed)"
+  if grep -q '"enable_tpu"[[:space:]]*:[[:space:]]*true' "$dir/kernel-metadata.json"; then
+    # TPU draws on a SEPARATE 20 h/week quota from the GPU's 30 h. Passing
+    # --accelerator here would override the metadata and silently request a
+    # GPU instead, which is both the wrong hardware and the exhausted budget.
+    echo "launching $name on TPU (separate 20 h/week quota)"
+    $KAGGLE kernels push -p "$dir"
+  elif grep -q '"enable_gpu"[[:space:]]*:[[:space:]]*false' "$dir/kernel-metadata.json"; then
+    echo "launching $name on CPU (no accelerator quota consumed)"
     $KAGGLE kernels push -p "$dir"
   else
     $KAGGLE kernels push -p "$dir" --accelerator NvidiaTeslaT4
