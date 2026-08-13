@@ -18,6 +18,10 @@ grep -q 'submission.to_csv("submission.csv", index=False)' "$2/script.py" || { e
 grep -q 'write_and_exit' "$2/script.py" || { echo "degraded-mode fallback missing: a raising notebook burns a submission slot for nothing" >&2; exit 1; }
 grep -q 'still the 0.5 default' "$2/script.py" || { echo "missing the constant-submission tripwire" >&2; exit 1; }
 
-grep -q "find_dinov2(want_hidden)" "$2/script.py" || { echo "encoder must be selected by matching the checkpoint hidden size, not by mount order" >&2; exit 1; }
+# The encoder must be resolved PER CHECKPOINT. A mixed ensemble is the point -
+# ours is five DINOv2-small plus one base - and resolving once from the first
+# checkpoint would build every member at that width and die on the mismatch.
+grep -q 'for path in checkpoints:' "$2/script.py" || { echo "checkpoint loop missing" >&2; exit 1; }
+awk '/for path in checkpoints:/{f=1} f&&/dinov2 = find_dinov2\(hidden\)/{ok=1} END{exit !ok}' "$2/script.py"   || { echo "encoder must be resolved INSIDE the checkpoint loop, by that checkpoint's hidden size" >&2; exit 1; }
 
 grep -q "rank(pct=True)" "$2/script.py" || { echo "members must be combined by RANK - AUC reads order, and probability-mean lets a confident member dominate a better-ranking one" >&2; exit 1; }

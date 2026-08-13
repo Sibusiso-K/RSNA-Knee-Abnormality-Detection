@@ -110,8 +110,22 @@ def write_and_exit(reason):
 
 
 try:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    log(f"device: {device}")
+    # CUDA, XLA/TPU or CPU. XLA matters here for a practical reason: five
+    # members on CPU already ran close to the 9 h submission cap, because the
+    # cost is (studies x slots x MEMBERS) encoder passes and members are the
+    # axis we want to grow. On TPU the same work is minutes, so the ensemble
+    # size stops being limited by the scoring budget.
+    XLA = False
+    xm = None
+    try:
+        import torch_xla.core.xla_model as _xm
+
+        xm = _xm
+        device = xm.xla_device()
+        XLA = True
+    except Exception:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    log(f"device: {device}  XLA={XLA}")
 
     from src.model.slotnet import SlotNet
 
@@ -155,18 +169,20 @@ try:
         write_and_exit("no checkpoints found")
     log(f"checkpoints: {[os.path.basename(c) for c in checkpoints]}")
 
-    # The checkpoint decides which encoder is correct, not the metadata.
-    probe = torch.load(checkpoints[0], map_location="cpu", weights_only=False)
-    want_hidden = int(probe["model"]["vit.embeddings.cls_token"].shape[-1])
-    log(f"checkpoint expects encoder hidden size {want_hidden}")
-
-    dinov2 = find_dinov2(want_hidden)
-    if dinov2 is None:
-        write_and_exit(f"no mounted DINOv2 with hidden_size {want_hidden}")
-
+    # Encoder is resolved PER CHECKPOINT, not once for the batch.
+    #
+    # The whole point of a mixed ensemble is that members differ, and the
+    # cheapest useful difference is encoder width - our sixth member is
+    # DINOv2-base (768) alongside five smalls (384). Resolving the encoder from
+    # checkpoints[0] and reusing it would build every member on that width and
+    # die on the first mismatch. Each checkpoint names its own.
     models = []
     for path in checkpoints:
         blob = torch.load(path, map_location="cpu", weights_only=False)
+        hidden = int(blob["model"]["vit.embeddings.cls_token"].shape[-1])
+        dinov2 = find_dinov2(hidden)
+        if dinov2 is None:
+            write_and_exit(f"no mounted DINOv2 with hidden_size {hidden}")
         # Build the model from the checkpoint's own recorded configuration, not
         # from this file's defaults. A checkpoint trained with a different pool
         # or a different prior setting loads with every shape matching and is
@@ -221,15 +237,22 @@ try:
 
         x = torch.from_numpy(np.stack(volumes)).to(device)
         m = torch.from_numpy(np.stack(masks)).float().to(device)
-        with torch.no_grad(), torch.autocast("cuda", enabled=device.type == "cuda"):
+        autocast = (torch.autocast("xla", dtype=torch.bfloat16) if XLA
+                    else torch.autocast("cuda", enabled=device.type == "cuda"))
+        with torch.no_grad(), autocast:
             # Keep every member separate here; they are combined by RANK across
             # the whole test set once all batches are in, not averaged per
             # batch. A rank is a position within a column, so it cannot be
             # computed on 8 studies at a time.
             for member, net in enumerate(models):
-                member_preds[member][rows] = (
-                    torch.sigmoid(net(x, m).float()).cpu().numpy()
-                )
+                probs = torch.sigmoid(net(x, m).float())
+                if XLA:
+                    # Cut the graph per member. Without it XLA traces every
+                    # member of every batch into one graph and compiles the lot
+                    # at the first .cpu() - which on the training side turned
+                    # 0.12 s/step into 12 s/step and then ran out of HBM.
+                    xm.mark_step()
+                member_preds[member][rows] = probs.cpu().numpy()
 
         if start % 80 == 0:
             rate = (start + BATCH) / max(time.time() - T0, 1e-6)

@@ -9,13 +9,16 @@
   "enable_internet": false,
   "dataset_sources": [
     "sibusisokhumalo11/knee-src",
-    "sibusisokhumalo11/knee-slot-model-v1"
+    "sibusisokhumalo11/knee-slot-model-v1",
+    "sibusisokhumalo11/knee-slot-base-v1"
   ],
   "competition_sources": [
     "rsna-knee-abnormality-detection"
   ],
   "kernel_sources": [],
   "model_sources": [
-    "metaresearch/dinov2/pyTorch/small/1"
-  ]
+    "metaresearch/dinov2/pyTorch/small/1",
+    "metaresearch/dinov2/pyTorch/base/1"
+  ],
+  "enable_tpu": true
 }
