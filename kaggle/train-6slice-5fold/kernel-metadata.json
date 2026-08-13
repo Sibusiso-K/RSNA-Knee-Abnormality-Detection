@@ -1,23 +1,24 @@
 {
-  "id": "sibusisokhumalo11/knee-submit-slots",
-  "title": "knee-submit-slots",
+  "id": "sibusisokhumalo11/knee-train-6slice-5fold",
+  "title": "knee-train-6slice-5fold",
   "code_file": "script.py",
   "language": "python",
   "kernel_type": "script",
   "is_private": true,
   "enable_gpu": false,
+  "enable_tpu": true,
   "enable_internet": false,
   "dataset_sources": [
     "sibusisokhumalo11/knee-src",
-    "sibusisokhumalo11/knee-slot-mix-v1"
+    "sibusisokhumalo11/knee-labels"
   ],
   "competition_sources": [
     "rsna-knee-abnormality-detection"
   ],
-  "kernel_sources": [],
-  "model_sources": [
-    "metaresearch/dinov2/pyTorch/small/1",
-    "metaresearch/dinov2/pyTorch/base/1"
+  "kernel_sources": [
+    "sibusisokhumalo11/knee-cache-6slice"
   ],
-  "enable_tpu": false
+  "model_sources": [
+    "metaresearch/dinov2/pyTorch/small/1"
+  ]
 }
