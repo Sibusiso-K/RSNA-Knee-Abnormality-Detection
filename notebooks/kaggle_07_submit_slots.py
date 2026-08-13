@@ -53,7 +53,7 @@ ID = "StudyInstanceUID"
 #: hidden test DICOMs across thousands of nested directories; walking it cost
 #: ~1,100 s per call on the training side, and here that comes straight off the
 #: 9 h submission cap. The markers we look for are never inside it.
-SKIP_DIRS = {"train_series", "test_series", ".git", "__pycache__"}
+SKIP_DIRS = {"train_series", "test_series", ".git", "__pycache__", "pkg"}
 
 
 def find_dir(marker, max_depth=5):

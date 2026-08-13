@@ -48,7 +48,7 @@ def log(msg):
 PKG = "/kaggle/working/pkg"
 INPUT = "/kaggle/input"
 ID = "StudyInstanceUID"
-SKIP_DIRS = {"train_series", "test_series", ".git", "__pycache__"}
+SKIP_DIRS = {"train_series", "test_series", ".git", "__pycache__", "pkg"}
 
 
 def find_dir(marker, max_depth=6):

@@ -52,7 +52,7 @@ INPUT = "/kaggle/input"
 #: find_dir calls spent ~1,100 s each traversing it — ~37 minutes of a 20 h/week
 #: quota, before a single training step. The markers we look for are never
 #: inside it.
-SKIP_DIRS = {"train_series", "test_series", ".git", "__pycache__"}
+SKIP_DIRS = {"train_series", "test_series", ".git", "__pycache__", "pkg"}
 
 
 def find_dir(marker, max_depth=6):
