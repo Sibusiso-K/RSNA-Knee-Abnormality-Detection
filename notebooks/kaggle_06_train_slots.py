@@ -197,6 +197,24 @@ cache = load_shards(f"{cache_dir}/cache_train_*.npy", mmap=MMAP)
 mask = load_shards(f"{cache_dir}/mask_train_*.npy")
 log(f"cache {cache.shape} {cache.nbytes / 1024**3:.2f} GB "
     f"({'mmap' if MMAP else 'RAM'}) | index {len(index)}")
+
+# The encoder takes THREE channels - a 2.5D triplet - so a cache holding more
+# slices per slot holds several GROUPS of three, not one wide image. Training
+# draws one group per step (which also acts as augmentation along the stack)
+# and inference averages over all of them. With one group the two coincide,
+# which is why this was invisible until the 6-slice cache arrived and the ViT
+# was handed six channels.
+from src.data.slots import GROUP                             # noqa: E402
+
+N_GROUPS = max(1, cache.shape[2] // GROUP)
+if cache.shape[2] % GROUP:
+    raise SystemExit(f"cache has {cache.shape[2]} slices/slot, not a multiple of {GROUP}")
+log(f"slices/slot {cache.shape[2]} = {N_GROUPS} group(s) of {GROUP}")
+
+
+def take_group(rows, g):
+    """Slice GROUP consecutive channels out of the cached slices."""
+    return cache[rows][:, :, g * GROUP:(g + 1) * GROUP]
 if not (len(index) == len(cache) == len(mask)):
     raise SystemExit(
         f"cache/index length mismatch: index {len(index)} cache {len(cache)} "
@@ -329,11 +347,14 @@ def predict(model, rows):
     out = []
     for start in range(0, len(rows), BATCH):
         sel = rows[start : start + BATCH]
-        x = torch.from_numpy(cache[sel]).to(device)
         m = torch.from_numpy(mask[sel]).float().to(device)
-        with autocast():
-            logits = model(x, m, TRAIN_SIZE).float()
-        probs = torch.sigmoid(logits)
+        acc = None
+        for g in range(N_GROUPS):
+            x = torch.from_numpy(take_group(sel, g)).to(device)
+            with autocast():
+                logits = model(x, m, TRAIN_SIZE).float()
+            acc = logits if acc is None else acc + logits
+        probs = torch.sigmoid(acc / N_GROUPS)
         if XLA:
             xm.mark_step()
         out.append(probs.cpu().numpy())
@@ -411,7 +432,8 @@ def run_fold(fold):
             if len(sel) == 0:
                 continue
             rows = train_rows[sel]
-            x = torch.from_numpy(cache[rows]).to(device)
+            g = np.random.randint(N_GROUPS)
+            x = torch.from_numpy(take_group(rows, g)).to(device)
             m = torch.from_numpy(mask[rows]).float().to(device)
             y = torch.from_numpy(train_y[sel]).to(device)
 
