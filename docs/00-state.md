@@ -196,6 +196,30 @@
 > 0.7817–0.8041). Any single-fold experiment worth less than ~0.02 is unmeasurable
 > without repeating folds.
 >
+> ### Four levers, four nothings — the model is saturated on this representation
+>
+> | Lever | fold-0 CV | vs 0.7990 | Verdict |
+> |---|---|---|---|
+> | 8 vs 4 epochs (old pipeline) | — | — | nothing |
+> | 20 vs 10 epochs | 0.7964 | +0.0016 | noise |
+> | DINOv2-base (43.1M vs 11.0M) | 0.7985 | −0.0005 | nothing |
+> | **448 px (0.290 mm/px vs 0.387)** | **0.7976** | **−0.0014** | **nothing** |
+> | 2-model rank-mean | 0.8077 | +0.0086 | real, under the 0.010 bar |
+>
+> The 448 run was valid, not a silent no-op: the log shows `(4407, 6, 3, 448, 448)`
+> and step time rose 0.35 s → 0.56 s, matching 1025 tokens against 577.
+>
+> **Neither capacity nor pixel density moves this.** Everything sits at ~0.798 CV /
+> ~0.82 gold58. Do not spend further runs on either axis.
+>
+> ⚠️ **A retracted inference.** This file previously argued the model "does not reach
+> its teacher" (0.82 vs labels' 0.8930) and concluded information is lost in the
+> representation. That does not follow: a perfect *image* model need not match
+> *report-derived* labels, because reports carry context no pixel contains. The sound
+> version of the argument is external — **teams score 0.935 on the same hidden test
+> set**, so the headroom is real even though this particular diagnostic did not
+> establish where it lives.
+>
 > ### Three capacity levers, three nothings — and where the loss actually is
 >
 > | Lever | Result | Verdict |
