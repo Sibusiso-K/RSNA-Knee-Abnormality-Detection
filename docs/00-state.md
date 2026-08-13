@@ -196,6 +196,43 @@
 > 0.7817–0.8041). Any single-fold experiment worth less than ~0.02 is unmeasurable
 > without repeating folds.
 >
+> ### 🔑 THE BOTTLENECK IS THE HEAD — and it explains all four nulls
+>
+> Read from what the top public work actually publishes (2026-08-13), not inferred.
+>
+> **`bend-the-knee-to-dinov3-ensembled`** — rank-mean of **~25 members**: 20 DINOv2
+> (pilkwang), 4 (tonylica), 1 DINOv3 ViT-S/16, plus a **RadImageNet ResNet-50**
+> (radiology-pretrained). Ours is five folds of one config.
+>
+> **`domain-adaptation-beats-resolution`** — **LB 0.883** from five DINOv2 ViT-B/14
+> trained **off-Kaggle**, on Qwen3-14B soft targets with **confidence weights scaling
+> each label's loss**. Its own numbers: 224px → 0.866, 336px → 0.883. Resolution helps
+> to 336 then flattens — an independent confirmation of our 448 null.
+>
+> **The aggregation head is the difference:**
+>
+> | Stage | Ours (`SlotHead`) | Theirs (`RTAHMIL`) |
+> |---|---|---|
+> | Slices | none — they are RGB channels | TransformerEncoder + slice positional embeddings |
+> | Series pooling | fixed CLS+mean+focal | learned query + MultiheadAttention |
+> | Slot/plane/sequence | fixed prior tilt | **learned embeddings** |
+> | Study | none | **2-layer TransformerEncoder** across series |
+> | Targets | 12 queries over **6 pooled vectors** | 12 queries cross-attending the **full token sequence** |
+> | Target structure | none | **group embeddings** (ligament/meniscus/OA/inflammation/bone) |
+> | Heads | one shared linear | **12 separate MLPs** |
+>
+> **Our head collapses each slot to one vector before any finding-specific reasoning.**
+> Twelve queries then attend over six numbers.
+>
+> That single choice accounts for everything below:
+> - **capacity null** — the encoder was never the constraint
+> - **resolution null** — pooling averages the extra detail away before the head sees it
+> - **focal findings worst** (PF OA 0.711, MCL 0.747, Lat Meniscus 0.754) — they need
+>   spatial attention the head cannot express; diffuse findings survive pooling
+> - **ensembling only +0.0086** — it averages models sharing one bottleneck
+>
+> **Next action: rebuild the head. Keep the cache, the encoder and the labels fixed.**
+>
 > ### Four levers, four nothings — the model is saturated on this representation
 >
 > | Lever | fold-0 CV | vs 0.7990 | Verdict |
