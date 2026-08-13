@@ -92,6 +92,25 @@ from src.data.cache import N_SLICE, build_study      # noqa: E402
 from src.data.slots import IMG, N_SLOT               # noqa: E402
 from src.labels import TARGETS                        # noqa: E402
 
+# Decoding depends on packages that differ between Kaggle's CPU/GPU image and
+# its TPU image, and submissions run with internet OFF so nothing can be
+# installed at runtime. Report what is actually present before doing any work:
+# a missing JPEG-2000 backend turns every study into a silent decode failure
+# and a constant 0.5 submission.
+for _mod in ("pydicom", "cv2", "gdcm", "pylibjpeg", "openjpeg", "PIL"):
+    try:
+        _m = __import__(_mod)
+        log(f"  {_mod:10s} {getattr(_m, '__version__', 'present')}")
+    except Exception as _exc:                              # noqa: BLE001
+        log(f"  {_mod:10s} MISSING ({type(_exc).__name__})")
+try:
+    import pydicom
+
+    log(f"  pydicom handlers: "
+        f"{[h.__name__.split('.')[-1] for h in pydicom.config.pixel_data_handlers if h.is_available()]}")
+except Exception as _exc:                                  # noqa: BLE001
+    log(f"  pydicom handler probe failed: {_exc}")
+
 test = pd.read_csv(f"{COMP}/test.csv")
 test_series = pd.read_csv(f"{COMP}/test_series.csv")
 submission = pd.DataFrame({ID: test[ID]})
@@ -229,7 +248,16 @@ try:
                 sides[meta["side"] if meta["side"] in ("L", "R") else ""] += 1
                 crop_ok += ok
                 crop_total += total
-            except Exception:
+            except Exception as exc:    # noqa: BLE001
+                # The FIRST failure is printed in full, with a traceback.
+                # Counting failures silently is how a run reports "decode
+                # failures 3" and leaves you guessing whether the cause is a
+                # missing decoder, a missing package or a bad path. One
+                # traceback costs nothing and names it.
+                if failures == 0:
+                    log(f"first decode failure on {row[ID]}: "
+                        f"{type(exc).__name__}: {exc}")
+                    traceback.print_exc()
                 failures += 1           # keeps its 0.5 default
 
         if not volumes:

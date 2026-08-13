@@ -231,6 +231,25 @@
 > The pre-registration is the point: the threshold was written into the script before
 > the run, and honouring it at +0.0086 is what makes the next one worth anything.
 >
+> ### ⚠️ Operational limits, all measured the hard way
+>
+> | Limit | Consequence |
+> |---|---|
+> | **Kaggle TPU image cannot decode our DICOMs** | Every study fails; submission becomes a constant 0.5 |
+> | **Only ONE concurrent TPU session** | Training and a TPU submission cannot overlap |
+> | TPU billing is wall-clock, incl. the 9 GB mount | Run all folds in ONE kernel, not five |
+> | `find_dir` over `train_series/` costs ~1,100 s/call | `SKIP_DIRS` is not optional |
+> | GPU/CPU image DOES decode | Use GPU for submissions once quota refreshes |
+>
+> **The TPU decode failure is the important one.** The same code decodes fine on the
+> CPU image (L=1 R=2, crop 11/11) and fails on all 3 studies on TPU. Submissions run
+> with internet OFF, so nothing can be pip-installed to fix it at scoring time.
+> **Submit on GPU or CPU, never TPU.** Train on TPU.
+>
+> It was caught only by the constant-submission tripwire in `kaggle_07_submit_slots.py`
+> — six members loaded correctly, the rank-mean ran, and it wrote an all-0.5 file that
+> would have scored ~0.5 and burned a slot. Keep that tripwire.
+>
 > ### Cost model on TPU (measured)
 >
 > | | |
