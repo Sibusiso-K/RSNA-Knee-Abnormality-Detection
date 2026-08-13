@@ -198,6 +198,18 @@ for n, study_uid in enumerate(studies):
 
 flush()
 
+# Remove the bootstrapped src copy from the OUTPUT before finishing.
+#
+# /kaggle/working is this kernel's output, so pkg/src ships with the cache.
+# Any later kernel mounting this via kernel_sources can then resolve
+# find_dir("labels.py") to THIS frozen copy instead of the live knee-src
+# dataset - which is exactly what happened: two runs died on
+# "SlotNet.__init__() got an unexpected keyword argument 'head'" while the
+# published src demonstrably had it. Consumers now skip "pkg" too, but not
+# shipping it is the fix that does not rely on every consumer remembering.
+shutil.rmtree(PKG, ignore_errors=True)
+log(f"removed {PKG} from the output so it cannot shadow knee-src later")
+
 log("=== done ===")
 log(f"studies: {len(studies)}")
 log(f"slot fill rate: {mask.mean():.3f} overall")
