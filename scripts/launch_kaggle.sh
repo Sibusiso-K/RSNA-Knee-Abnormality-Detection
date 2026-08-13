@@ -35,6 +35,26 @@ push_src() {
   printf '{\n  "title": "knee-src",\n  "id": "%s/knee-src",\n  "licenses": [{"name": "other"}]\n}\n' \
     "$OWNER" > "$dir/dataset-metadata.json"
   $KAGGLE datasets version -p "$dir" -m "${1:-update src}" -r zip
+
+  # WAIT for the new version to actually exist before returning.
+  #
+  # `datasets version` is ASYNCHRONOUS: it prints "version is being created"
+  # and returns immediately. A kernel launched in that window mounts the
+  # PREVIOUS version, so the code that just changed is silently not the code
+  # that runs. That cost a TPU run: an xattn head experiment failed with
+  # "SlotNet.__init__() got an unexpected keyword argument 'head'" because the
+  # kernel had the old src. Every earlier run survived only because something
+  # else happened between the push and the launch.
+  echo "waiting for knee-src to become ready..."
+  for _ in $(seq 1 60); do
+    if $KAGGLE datasets status "$OWNER/knee-src" 2>&1 | grep -qi '^ready'; then
+      echo "knee-src ready"
+      return 0
+    fi
+    sleep 10
+  done
+  echo "knee-src did not become ready in 10 min; refusing to launch stale code" >&2
+  return 1
 }
 
 launch() {
