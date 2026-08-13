@@ -120,17 +120,31 @@ log(f"shard {SHARD}/{N_SHARD}: {len(studies)} studies")
 PLANE_OF = dict(zip(series_meta["SeriesInstanceUID"],
                     series_meta["Anatomical_Plane"]))
 
-cache = np.zeros((len(studies), N_SLOT, N_SLICE, IMG, IMG), dtype=np.uint8)
+# The cache is written straight to disk as a memmap rather than built in RAM
+# and saved periodically.
+#
+# The old flush() called np.save on the WHOLE array, so a checkpoint every 200
+# studies rewrote every byte written so far: 22 flushes x 8.96 GB is ~197 GB of
+# writes to produce a 8.96 GB file. At six slices per slot that becomes ~394 GB
+# and stops being viable at all, which is what blocks the obvious next
+# experiment. A memmap makes each study's write land once, and it also means
+# the build no longer needs the cache to fit in RAM.
+CACHE_PATH = f"{OUT}/cache_{SPLIT}_{SHARD}.npy"
+cache = np.lib.format.open_memmap(
+    CACHE_PATH, mode="w+", dtype=np.uint8,
+    shape=(len(studies), N_SLOT, N_SLICE, IMG, IMG),
+)
 mask = np.zeros((len(studies), N_SLOT), dtype=np.uint8)
 rows = []
 
 log(f"cache tensor: {cache.nbytes / 1024**3:.2f} GB "
-    f"({len(studies)} x {N_SLOT} x {N_SLICE} x {IMG}^2)")
+    f"({len(studies)} x {N_SLOT} x {N_SLICE} x {IMG}^2) -> {CACHE_PATH}")
 log(f"slots: {[s[0] for s in SLOTS]}")
 
 
 def flush():
-    np.save(f"{OUT}/cache_{SPLIT}_{SHARD}.npy", cache)
+    """Only the small companions need writing; the pixels are already on disk."""
+    cache.flush()
     np.save(f"{OUT}/mask_{SPLIT}_{SHARD}.npy", mask)
     pd.DataFrame(rows).to_csv(f"{OUT}/index_{SPLIT}_{SHARD}.csv", index=False)
 
