@@ -169,6 +169,33 @@
 > it is scored against real annotations, as the leaderboard is — but on 58 studies it
 > carries ±0.05 easily.
 >
+> ### ✅ LB 0.850 — and the CV→LB offset is +0.055, not +0.008
+>
+> Submission `55475708`, 5-fold rank-mean, 2026-08-13.
+>
+> | | CV | LB | offset |
+> |---|---|---|---|
+> | old pipeline | 0.7746 | 0.783 | +0.008 |
+> | **new pipeline** | **0.7949** | **0.850** | **+0.055** |
+>
+> **Rank 627 / 1341**, up from 713 / 1185. The field moved too: top-10 cutoff is now
+> **0.935** (was 0.930), rank 100 = 0.907, rank 200 = 0.899.
+>
+> The offset changed because the CV *metric* changed — blend labels, undecided cells
+> dropped — so the two CV columns are not the same measurement. **Site-grouped CV is
+> substantially harsher than this leaderboard.** Use +0.055 as the working anchor at
+> this operating point, and re-measure it rather than extrapolating far from it.
+>
+> **Still +0.085 short of top 10.** The rebuild bought the input, not the field.
+>
+> ⚠️ **More slices per slot is NOT the gap.** The public 0.899 runs `N_GROUP_MAX = 1`,
+> so it gets no inference-time group averaging either. A cache rebuild for more slices
+> would buy a difference that recipe does not contain. Checked before spending ~4 h on it.
+>
+> ⚠️ **Detection floor: ±0.011 on one fold** (measured across the 5-fold spread
+> 0.7817–0.8041). Any single-fold experiment worth less than ~0.02 is unmeasurable
+> without repeating folds.
+>
 > ### Cost model on TPU (measured)
 >
 > | | |
