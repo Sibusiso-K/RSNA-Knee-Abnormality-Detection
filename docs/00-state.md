@@ -196,6 +196,41 @@
 > 0.7817–0.8041). Any single-fold experiment worth less than ~0.02 is unmeasurable
 > without repeating folds.
 >
+> ### Three capacity levers, three nothings — and where the loss actually is
+>
+> | Lever | Result | Verdict |
+> |---|---|---|
+> | 8 vs 4 epochs (old pipeline) | — | nothing |
+> | 20 vs 10 epochs | +0.0016 | noise |
+> | **DINOv2-base vs small** (43.1M vs 11.0M trainable) | **−0.0005** | **nothing** |
+>
+> **Capacity and training budget are not the constraint.** Stop proposing experiments
+> that assume they are.
+>
+> **The diagnostic that should drive everything from here:** the labels score **0.8930**
+> against the 58 gold studies; the model scores **~0.82** against the same studies.
+> The model does not reach its own teacher, so label noise is not the binding ceiling
+> either — roughly 0.07 of headroom sits unused. What remains is the **image
+> representation**: resolution, slice coverage, or how the slots are formed.
+>
+> ### Diversity pays a little, but not enough to buy
+>
+> Measured on fold 0 (`knee-diversity`), both members on the same validation split:
+>
+> | | fold-0 CV |
+> |---|---|
+> | base alone | 0.7988 |
+> | small alone | 0.7992 |
+> | rank-mean of both | **0.8077 (+0.0086)** |
+> | per-label Spearman | mean 0.853, min 0.751, max 0.925 |
+>
+> Real but below the **pre-committed 0.010 bar**, so base × 5 folds was NOT bought —
+> it would have cost ~3.5 h of a 20 h budget to average harder over the same
+> bottleneck. **base fold 0 already exists and joins the final ensemble free.**
+>
+> The pre-registration is the point: the threshold was written into the script before
+> the run, and honouring it at +0.0086 is what makes the next one worth anything.
+>
 > ### Cost model on TPU (measured)
 >
 > | | |
