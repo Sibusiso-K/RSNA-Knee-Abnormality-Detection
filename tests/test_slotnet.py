@@ -134,3 +134,101 @@ def test_gradients_reach_the_head():
     out.sum().backward()
     assert head.query.grad is not None
     assert np.isfinite(head.query.grad.numpy()).all()
+
+
+# --- cross-attention head -------------------------------------------------
+#
+# The head SlotHead's pooling was the bottleneck four experiments ran into:
+# capacity (base -0.0005) and resolution (448 -0.0014) could not help while
+# every slot was collapsed to one vector before any finding-specific reasoning.
+# These pin the properties that make the replacement worth having.
+
+from src.model.slotnet import (  # noqa: E402
+    GROUP_NAMES,
+    GROUP_OF_TARGET,
+    TARGET_GROUPS,
+    XAttnHead,
+)
+
+
+def _xhead(**kw):
+    torch.manual_seed(0)
+    return XAttnHead(dim=32, pooled_dim=96, hidden=16, heads=4, **kw)
+
+
+def test_xattn_output_shape():
+    head = _xhead()
+    out = head(torch.randn(2, N_SLOT, 17, 32), torch.randn(2, N_SLOT, 96),
+               torch.ones(2, N_SLOT))
+    assert out.shape == (2, len(TARGETS))
+
+
+def test_xattn_ignores_masked_slots_in_both_paths():
+    """A masked slot must reach neither the tokens nor the pooled path.
+
+    ~25% of slots are absent in this corpus, so this is a quarter of the input,
+    not an edge case.
+    """
+    head = _xhead().eval()
+    tokens = torch.randn(1, N_SLOT, 17, 32)
+    pooled = torch.randn(1, N_SLOT, 96)
+    mask = torch.ones(1, N_SLOT)
+    mask[0, 2] = 0.0
+    with torch.no_grad():
+        before = head(tokens, pooled, mask)
+        tokens[0, 2] = torch.randn(17, 32) * 100.0
+        pooled[0, 2] = torch.randn(96) * 100.0
+        after = head(tokens, pooled, mask)
+    assert torch.allclose(before, after, atol=1e-5)
+
+
+def test_xattn_sees_detail_a_mean_pool_cannot():
+    """A change that preserves the slot MEAN must still change the output.
+
+    This is the whole point of the head, stated precisely. Concentrating signal
+    into one token while compensating across the others leaves every mean-based
+    summary identical — so `SlotHead`, which only ever sees such summaries,
+    cannot react. The cross-attention path reads the tokens and must.
+
+    Note what this does NOT claim: attention over a key sequence is
+    permutation-invariant, so shuffling tokens is correctly a no-op. Position
+    is carried in the token VALUES (DINOv2 adds its positional embeddings
+    inside the encoder), not in their order.
+    """
+    head = _xhead().eval()
+    tokens = torch.randn(1, N_SLOT, 17, 32)
+    pooled = torch.randn(1, N_SLOT, 96)
+    mask = torch.ones(1, N_SLOT)
+
+    spiked = tokens.clone()
+    delta = torch.randn(32) * 5.0
+    spiked[0, 0, 0] += delta                       # concentrate into one token
+    spiked[0, 0, 1:] -= delta / (17 - 1)           # ... and hold the mean fixed
+
+    assert torch.allclose(tokens[0, 0].mean(0), spiked[0, 0].mean(0), atol=1e-5)
+    with torch.no_grad():
+        before = head(tokens, pooled, mask)
+        after = head(spiked, pooled, mask)
+    assert not torch.allclose(before, after, atol=1e-5)
+
+
+def test_every_target_belongs_to_exactly_one_group():
+    seen = [t for group in TARGET_GROUPS.values() for t in group]
+    assert sorted(seen) == sorted(TARGETS), "targets must partition into groups"
+    assert len(seen) == len(set(seen)), "a target cannot be in two groups"
+
+
+def test_group_ids_are_in_range_and_match_the_table():
+    assert len(GROUP_OF_TARGET) == len(TARGETS)
+    for target, gid in zip(TARGETS, GROUP_OF_TARGET):
+        assert 0 <= gid < len(GROUP_NAMES)
+        assert target in TARGET_GROUPS[GROUP_NAMES[gid]]
+
+
+def test_related_findings_share_a_group():
+    """Medial and lateral meniscus are read the same way; so are the OA labels."""
+    gid = dict(zip(TARGETS, GROUP_OF_TARGET))
+    assert gid["Medial Meniscus"] == gid["Lateral Meniscus"]
+    assert gid["Medial OA"] == gid["Lateral OA"] == gid["PF OA"]
+    assert gid["ACL"] == gid["MCL"]
+    assert gid["Medial Meniscus"] != gid["ACL"]
