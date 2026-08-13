@@ -19,3 +19,5 @@ grep -q 'write_and_exit' "$2/script.py" || { echo "degraded-mode fallback missin
 grep -q 'still the 0.5 default' "$2/script.py" || { echo "missing the constant-submission tripwire" >&2; exit 1; }
 
 grep -q "find_dinov2(want_hidden)" "$2/script.py" || { echo "encoder must be selected by matching the checkpoint hidden size, not by mount order" >&2; exit 1; }
+
+grep -q "rank(pct=True)" "$2/script.py" || { echo "members must be combined by RANK - AUC reads order, and probability-mean lets a confident member dominate a better-ranking one" >&2; exit 1; }

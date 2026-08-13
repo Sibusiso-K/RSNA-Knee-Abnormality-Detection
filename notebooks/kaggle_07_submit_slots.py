@@ -184,6 +184,12 @@ try:
 
     BATCH = 8
     preds = np.full((len(test), len(TARGETS)), 0.5, dtype=np.float32)
+    # One prediction matrix per member, combined by rank at the end.
+    member_preds = [
+        np.full((len(test), len(TARGETS)), 0.5, dtype=np.float32)
+        for _ in models
+    ]
+    scored = np.zeros(len(test), dtype=bool)
     failures = empty = 0
     sides = {"L": 0, "R": 0, "": 0}
     crop_ok = crop_total = 0
@@ -203,6 +209,7 @@ try:
                 volumes.append(vol)
                 masks.append(msk)
                 rows.append(start + offset)
+                scored[start + offset] = True
                 sides[meta["side"] if meta["side"] in ("L", "R") else ""] += 1
                 crop_ok += ok
                 crop_total += total
@@ -215,17 +222,40 @@ try:
         x = torch.from_numpy(np.stack(volumes)).to(device)
         m = torch.from_numpy(np.stack(masks)).float().to(device)
         with torch.no_grad(), torch.autocast("cuda", enabled=device.type == "cuda"):
-            # Average probabilities, not logits: folds are separately
-            # calibrated and AUC reads order only.
-            probs = torch.stack(
-                [torch.sigmoid(net(x, m).float()) for net in models]
-            ).mean(0)
-        preds[rows] = probs.cpu().numpy()
+            # Keep every member separate here; they are combined by RANK across
+            # the whole test set once all batches are in, not averaged per
+            # batch. A rank is a position within a column, so it cannot be
+            # computed on 8 studies at a time.
+            for member, net in enumerate(models):
+                member_preds[member][rows] = (
+                    torch.sigmoid(net(x, m).float()).cpu().numpy()
+                )
 
         if start % 80 == 0:
             rate = (start + BATCH) / max(time.time() - T0, 1e-6)
             log(f"  {start}/{len(test)}  {rate:.2f} study/s  "
                 f"failures {failures} empty {empty}")
+
+    # --- combine members by RANK, per column ----------------------------
+    # The metric is macro AUC over twelve independent per-label AUCs, and AUC
+    # reads order only. Averaging probabilities lets a member that happens to
+    # be more confident dominate one that merely ranks better; ranking first
+    # makes members from different folds - or different configurations
+    # entirely - directly comparable. This is what the public 0.899 notebook
+    # does, and it is the OPPOSITE of the right rule for combining LABELS,
+    # where BCE needs calibrated targets rather than queue positions.
+    #
+    # Only rows that were actually scored take part. A failed study keeps its
+    # 0.5 default, and ranking that 0.5 in with real predictions would give it
+    # a spurious mid-table position in every column.
+    if scored.any():
+        ranked = np.zeros((int(scored.sum()), len(TARGETS)), dtype=np.float32)
+        for member in member_preds:
+            frame = pd.DataFrame(member[scored], columns=list(TARGETS))
+            ranked += frame.rank(pct=True).to_numpy(dtype=np.float32)
+        preds[scored] = ranked / max(len(member_preds), 1)
+    log(f"combined {len(member_preds)} member(s) by per-column rank mean "
+        f"over {int(scored.sum())} scored studies")
 
     for i, target in enumerate(TARGETS):
         submission[target] = preds[:, i]
