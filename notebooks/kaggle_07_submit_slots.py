@@ -211,7 +211,17 @@ try:
         # from this file's defaults. A checkpoint trained with a different pool
         # or a different prior setting loads with every shape matching and is
         # quietly a different model.
-        net = SlotNet(dinov2, pool=blob.get("pool", "cls_mean_focal"))
+        # Which HEAD the checkpoint was trained with. Older checkpoints do
+        # not record it, so it is inferred from the weights themselves: the
+        # cross-attention head has parameters the slot head does not. Guessing
+        # wrong is not subtle - load_state_dict fails outright - but defaulting
+        # to "slot" and failing is exactly what happened here, so the model is
+        # built from what the file contains rather than from a default.
+        head = blob.get("head")
+        if head is None:
+            head = ("xattn" if any(k.startswith("head.cross_attn")
+                                   for k in blob["model"]) else "slot")
+        net = SlotNet(dinov2, pool=blob.get("pool", "cls_mean_focal"), head=head)
         net.load_state_dict(blob["model"])
         net.eval().to(device)
         models.append(net)

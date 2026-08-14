@@ -502,6 +502,8 @@ def run_fold(fold):
                     "device": "xla" if XLA else device.type,
                     "encoder": os.path.basename(dinov2),
                     "variant": VARIANT, "pool": POOL, "size": TRAIN_SIZE,
+                    "head": getattr(model, "head_type", "slot"),
+                    "slices_per_slot": int(cache.shape[2]),
                     "slots": [s[0] for s in SLOTS],
                     "fold": fold, "score": score, "epoch": epoch,
                     "labels": os.path.basename(label_path),

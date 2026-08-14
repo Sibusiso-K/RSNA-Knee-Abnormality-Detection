@@ -38,3 +38,5 @@ grep -q '_cache.N_SLICE = N_SLICE' "$2/script.py" || { echo "N_SLICE override mi
 grep -q 'for g in range(N_GROUPS)' "$2/script.py" || { echo "inference must average over groups" >&2; exit 1; }
 grep -q 'rank(pct=True)'           "$2/script.py" || { echo "members must combine by rank" >&2; exit 1; }
 grep -q 'still the 0.5 default'    "$2/script.py" || { echo "constant-submission tripwire missing" >&2; exit 1; }
+
+grep -q "head.cross_attn" "$2/script.py" || { echo "submission must infer the head from the weights; a slot-head default silently fails to load xattn checkpoints" >&2; exit 1; }
