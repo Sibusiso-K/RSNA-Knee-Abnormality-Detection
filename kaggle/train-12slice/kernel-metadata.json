@@ -1,0 +1,25 @@
+{
+  "id": "sibusisokhumalo11/knee-train-12slice",
+  "title": "knee-train-12slice",
+  "code_file": "script.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": true,
+  "enable_internet": false,
+  "dataset_sources": [
+    "sibusisokhumalo11/knee-src",
+    "sibusisokhumalo11/knee-labels"
+  ],
+  "competition_sources": [
+    "rsna-knee-abnormality-detection"
+  ],
+  "kernel_sources": [
+    "sibusisokhumalo11/knee-cache-12slice-s0",
+    "sibusisokhumalo11/knee-cache-12slice-s1"
+  ],
+  "model_sources": [
+    "metaresearch/dinov2/pyTorch/small/1"
+  ]
+}
