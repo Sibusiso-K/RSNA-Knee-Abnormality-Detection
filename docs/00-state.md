@@ -416,10 +416,54 @@ is exactly why prevalence had to be measured rather than reasoned about.
    therefore have been a regression**, routing a fluid-sensitive TIRM into a T1 slot. Caught only
    by printing the actual flipped strings; the counts alone said "harmless but positive". Any
    future fix must correct both patterns together.
-2. **The header classifier disagrees with the host's `Fluid_Sensitive` flag on ~20% of series.**
-   4,560 series the CSV calls structural are classified fluid-sensitive from headers. The
-   underscore fix moves that by 28. **This is three orders of magnitude larger than the bug we
-   chased and is unexplained.** See the open questions below.
+2. **`Fluid_Sensitive` is misnamed: the column actually encodes FAT SUPPRESSION.** See below — this
+   turned out to be the most valuable thing the scan produced.
+
+### `Fluid_Sensitive` does not mean fluid-sensitive (RESOLVED 2026-08-14)
+
+The scan first looked like it had found a 20% correctness problem: 4,560 of 24,371 series that the
+CSV marks `Fluid_Sensitive = 0` are classified fluid-sensitive from their headers. Reading the
+descriptions settled it immediately — they are `PDW_TSE_Sag`, `pd_tse_tra_d`, `t2_tse_sag_d`,
+`Sag T2 FSE`, `SAG DP` (French *densité de protons*). **T2 and PD are fluid-sensitive by
+definition.** 2,361 of the disagreements contain a PD/proton token and 1,586 contain `t2`; only 35
+contain `t1`.
+
+`docs/03-data-guide.md` already records that `Fluid_Sensitive` and `Fat_Suppression` are identical
+in all 24,371 rows, so between them they carry one bit. **This identifies which bit:**
+
+| The CSV flag vs the header-derived value | Agreement |
+|---|---|
+| as **fluid-sensitivity** | 80.19% |
+| as **fat-suppression** | **97.31%** |
+
+So the header classifier was right all along and slot routing has no correctness problem here. The
+`slots.py` decision to derive weighting from headers rather than the CSV — "the CSV flags cannot do
+the routing" — is now vindicated with a number rather than an argument. **Anyone using
+`Fluid_Sensitive` as a fluid-sensitivity signal misroutes ~4,560 T2/PD series.**
+
+#### The upside: a free, better fat-suppression label
+
+The flag is a *reliable fat-suppression* label for all 24,371 series, available from the CSV with no
+header read. The 592 series where the CSV says fat-suppressed and `_FATSAT_RX` disagrees are regex
+misses, and the CSV is right in every sampled case. Three distinct causes:
+
+| Cause | Examples | ~n |
+|---|---|---|
+| **The same underscore bug** — `\bfs\b`, `\bstir\b`, `\btirm\b` can't match between underscores | `STIR_aTSE_TR_16`, `t2_tirm_tra`, `t2_tse_fs_sag` | ~121 |
+| Missing vocabulary | `t2_de3d_we_tra…` (`we` = water excitation), `SMART FAT FSEfw` (Philips) | ~333 |
+| No fat-sat token in the text at all, but `ScanningSequence` says `IR` | `ROUTINE Fse ['SE','IR']`, `AXI DER` | ~63 |
+
+**This is 18× the T1 bug (592 series vs 32)** and it sits on the axis that separates `SAG_FLUID_FS`
+from `SAG_FLUID_NOFS`. Reading `Fat_Suppression` from the CSV fixes all three causes at once and
+deletes the regex from the routing path.
+
+**Not yet measured: study-level slot impact.** `pick_slot_series` needs `n_files` to resolve which
+series wins a slot, and the scan did not save it. Re-running with `uid` + `n_files` retained is
+another ~11 min CPU job and turns this into the same decision the T1 bug got. Do that before
+committing to a rebuild — 592 series is an upper bound on studies affected, not a count of them.
+
+**Do not bundle this with the 448 run.** That run is a controlled comparison against the 336 px
+baseline of 0.8207; changing slot routing at the same time confounds it. Land 448 first, then this.
 
 ### (historical) The T1 underscore bug as first characterised
 
@@ -458,16 +502,8 @@ in `tests/test_slots.py`, so whoever fixes the regex is forced to notice and rem
 
 ### Open, worth a decision rather than a default
 
-- **The 20% `Fluid_Sensitive` disagreement (NEW, unexplained, potentially large).** 4,560 of 24,371
-  series that `train_series.csv` marks structural are classified fluid-sensitive from their DICOM
-  headers. Either the header classifier is wrong at scale, or the CSV flag does not mean what the
-  column name says — recall `Fluid_Sensitive` and `Fat_Suppression` are **identical in all 24,371
-  rows**, so between them they carry one bit, and which bit is unverified. Both readings are
-  actionable and they point opposite ways, so this needs measuring before anything is changed.
-  Cheap next step: the scan already wrote `t1_scan_series.csv` with the per-series text, header
-  verdict and CSV flag — cross-tabulate the disagreements by description to see whether they
-  cluster on a vendor, a sequence family, or a plane. If the CSV flag is the more reliable of the
-  two, slot routing should read it directly and this is the largest single correctness lever left.
+- **DINOv2-base has never been re-tested under `xattn`** — see below; the existing null used the
+  pooled head.
 - **Encoder scaling has never been re-tested under `xattn`.** `knee-train-slots-tpu-base` calls
   `SlotNet(...)` with no `head=` argument, so it used the pooled head. Same for the 448 run. Both
   nulls predate the architecture change, and `XAttnHead`'s own docstring names that pooling as the
