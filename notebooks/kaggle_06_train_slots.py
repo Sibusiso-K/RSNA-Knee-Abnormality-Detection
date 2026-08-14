@@ -158,20 +158,42 @@ if cache_dir is None:
     raise SystemExit("knee-cache not found. Attach it, or run kaggle_05_cache.py.")
 log(f"cache: {cache_dir}")
 
-index = pd.concat(
-    [pd.read_csv(p) for p in sorted(glob.glob(f"{cache_dir}/index_train_*.csv"))],
-    ignore_index=True,
-)
-def load_shards(pattern, mmap=False):
+def shard_paths(pattern):
+    """Every matching shard across ALL mounted cache directories.
+
+    A sharded cache is mounted as one directory per shard, and find_dir returns
+    exactly one of them - it looks for index_train_0.csv, which only shard 0
+    has. Globbing inside that single directory therefore silently loads HALF a
+    two-shard cache: the 12-slice run trained on 2,176 studies instead of 4,349
+    and scored 0.7956, which looked like "more slices hurt" and was really
+    "half the data". Search from INPUT and sort by shard number.
+    """
+    roots = [INPUT, ".", ".."]
+    hits = []
+    for root in roots:
+        if os.path.isdir(root):
+            hits += glob.glob(os.path.join(root, "**", pattern), recursive=True)
+    hits = [h for h in hits if not any(f"{os.sep}{d}{os.sep}" in h for d in SKIP_DIRS)]
+    seen, out = set(), []
+    for h in sorted(set(hits), key=lambda x: os.path.basename(x)):
+        if os.path.basename(h) not in seen:
+            seen.add(os.path.basename(h))
+            out.append(h)
+    return out
+
+
+index_paths = shard_paths("index_train_*.csv")
+log(f"index shards: {[os.path.basename(p) for p in index_paths]}")
+index = pd.concat([pd.read_csv(p) for p in index_paths], ignore_index=True)
+def load_shards(paths, mmap=False):
     """Concatenate shards — but never copy a single one.
 
     `np.concatenate` always allocates a new array, so wrapping a lone 8.96 GB
     shard in it doubles peak RAM to ~18 GB to produce a byte-identical result.
     With one shard (the current layout) this returns the array as loaded.
     """
-    paths = sorted(glob.glob(pattern))
     if not paths:
-        raise SystemExit(f"no shards matched {pattern}")
+        raise SystemExit("no cache shards found")
     if len(paths) == 1:
         return np.load(paths[0], mmap_mode="r" if mmap else None)
     return np.concatenate([np.load(p) for p in paths])
@@ -193,8 +215,15 @@ MMAP = avail_gb < 14.0
 if MMAP:
     log("!! low host memory — falling back to mmap; expect slower steps")
 
-cache = load_shards(f"{cache_dir}/cache_train_*.npy", mmap=MMAP)
-mask = load_shards(f"{cache_dir}/mask_train_*.npy")
+cache = load_shards(shard_paths("cache_train_*.npy"), mmap=MMAP)
+mask = load_shards(shard_paths("mask_train_*.npy"))
+if len(index) != len(cache) or len(cache) != len(mask):
+    raise SystemExit(
+        f"shard mismatch: index {len(index)} cache {len(cache)} mask {len(mask)}. "
+        f"A sharded cache mounts one directory per shard and find_dir returns "
+        f"only one of them; loading half a cache trains on half the corpus and "
+        f"scores like a failed experiment."
+    )
 log(f"cache {cache.shape} {cache.nbytes / 1024**3:.2f} GB "
     f"({'mmap' if MMAP else 'RAM'}) | index {len(index)}")
 
