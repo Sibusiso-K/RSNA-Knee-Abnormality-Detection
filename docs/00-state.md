@@ -17,7 +17,8 @@
 
 ## Where we are right now
 
-**Public LB 0.856 — rank 721 / 1,488 teams.** Top of board is 0.946; rank 49 is 0.920.
+**Public LB 0.864** (slot-v3, scored 2026-08-14). Was rank 721 / 1,488 at 0.856; rank not re-checked
+since. Top of board is 0.946; rank 49 is 0.920.
 
 | Phase | Status |
 |---|---|
@@ -35,11 +36,23 @@
 | 2 | `knee-model-v2` + physical 160 mm FOV crop | 0.7767 | 0.781 |
 | 3 | **slot-v1** 5× DINOv2-small, 6 slots, 336 px, blend labels | 0.7949 | **0.850** |
 | 4 | **slot-v2** 6-member cross-family (3× small + 3× base) | ~0.805 | **0.856** |
-| 5 | **slot-v3** 5-fold rank-mean, xattn head, 6 slices/slot | **0.8185** | *running* |
+| 5 | **slot-v3** 5-fold rank-mean, xattn head, 6 slices/slot | **0.8185** | **0.864** |
 
 The rebuild (2 → 3) bought **+0.067 LB for +0.020 CV**. CV understates the leaderboard because CV is
 scored against noisy report-derived labels while the LB is scored against real ground truth — so
 **CV gains are a lower bound, not a forecast.**
+
+**The CV↔LB offset is stable**, which is what makes CV usable for ranking experiments:
+
+| CV | LB | offset |
+|---|---|---|
+| 0.7949 | 0.850 | +0.055 |
+| ~0.805 | 0.856 | +0.051 |
+| 0.8185 | 0.864 | +0.046 |
+
+It is drifting *down* slightly as CV rises — consistent with CV approaching the quality ceiling of
+the labels it is scored against. Do not extrapolate it past ~0.83 CV without a fresh calibration
+point.
 
 ### The current architecture (replaces everything in sessions 9–12)
 
@@ -353,11 +366,14 @@ converts "does our notebook even produce a scoreable file" from an unknown into 
 
 ## Immediate next steps (after session 18)
 
-1. **Collect the slot-v3 LB score.** `knee-submit-6slice` has been "Notebook Running" for 6 h
-   against a 9 h cap. CV 0.8185 vs slot-v2's ~0.805 predicts roughly 0.86–0.87 if the CV↔LB
-   relation holds. **This is the number that says whether CV is still tracking the LB** — everything
-   below is cheaper to decide once it lands.
-2. **Stop scaling slices, and stop scaling the encoder.** Both levers are now measured nulls:
+1. **Re-test resolution under `xattn` — in flight.** `knee-cache-448x6-s0/s1` are building a
+   448 px × 6-slice cache (14.83 GB per shard, vs the 16.7 GB 12-slice shards that already worked).
+   Then train **fold 0 only** and compare against the known fold-0 baseline **0.8207**. One number,
+   ~1.3 h TPU, decisive. Only if it wins should the remaining four folds be spent.
+2. **Stop scaling slices** — 12 slices/slot scored 0.8161 on fold 0 vs 6 slices' 0.8207, both under
+   `xattn`, so the comparison is clean and coverage is saturated. **Encoder scaling is NOT settled**
+   — that null was measured on the pooled head (see open questions).
+3. **The old point 2, retained because the reasoning still holds:**
    - 12 slices/slot scored **0.8161 on fold 0 vs 6 slices' 0.8207** — slightly *worse*, for 2× the
      cache RAM (33.36 GB vs 16.68 GB) and a longer run. Coverage saturated between 6 and 12.
    - DINOv2-small → base is a null (see the decision log). Independently corroborated on the forum
@@ -371,7 +387,41 @@ converts "does our notebook even produce a scoreable file" from an unknown into 
 4. **Put tests on the slot code before changing it further.** It has none, and `SLOTS` ordering
    silently invalidates caches (see the test-coverage gap above).
 
-### The T1 underscore bug (found 2026-08-14, NOT yet fixed)
+### The T1 underscore bug — MEASURED 2026-08-14, verdict: **do not fix**
+
+`knee-t1-scan` (CPU, 11 min, one header per series across all 24,371) settled it. The bug is
+completely real and completely immaterial:
+
+| | |
+|---|---|
+| Series whose weighting flips under the fix | **32 of 24,371 (0.13%)** |
+| Studies gaining a T1 slot | **23 of 4,407 (0.52%)** — 23 COR_T1, 4 SAG_T1, 0 lost |
+| Mean slots per study | 4.482 → 4.487 |
+
+Not worth invalidating every published cache and retraining 5 folds. **Closed.** The xfail in
+`tests/test_slots.py` stays as documentation of a known, deliberately-unfixed defect.
+
+**Why so few, when 42.5% of series are structural:** `classify_weighting` falls through to the
+TR/TE branch, and T1 sequences genuinely have short TR *and* short TE. Physics rescues nearly every
+series the regex misses. The bug only surfaces where TR/TE are absent or ambiguous. Worth
+remembering as a general shape: a redundant fallback can mask a real defect almost entirely, which
+is exactly why prevalence had to be measured rather than reasoned about.
+
+#### Two things the scan found that matter more than the bug it was built for
+
+1. **The same underscore flaw is in the STIR guard, and it bites the other way.** Two flipped
+   series were `t1_tirm_cor` / `t1_tirm_tra`. TIRM is STIR-family, i.e. genuinely fluid-sensitive,
+   and the guard meant to catch that — `\bstir\b|\btirm\b|\bspair\b` — fails on `stir_sag`,
+   `t1_tirm_cor` and `t2_spair_ax` for the identical reason. **The proposed T1-only fix would
+   therefore have been a regression**, routing a fluid-sensitive TIRM into a T1 slot. Caught only
+   by printing the actual flipped strings; the counts alone said "harmless but positive". Any
+   future fix must correct both patterns together.
+2. **The header classifier disagrees with the host's `Fluid_Sensitive` flag on ~20% of series.**
+   4,560 series the CSV calls structural are classified fluid-sensitive from headers. The
+   underscore fix moves that by 28. **This is three orders of magnitude larger than the bug we
+   chased and is unexplained.** See the open questions below.
+
+### (historical) The T1 underscore bug as first characterised
 
 `_T1_RX` in `src/data/slots.py` matches with `\b`. **Underscore is a word character** in Python
 regex (`\w == [A-Za-z0-9_]`), so `\bt1w\b` cannot match `t1w_sag` — there is no boundary between
@@ -407,6 +457,22 @@ checkpoints behind LB 0.856 — a rebuild-and-retrain, not a one-line fix. It is
 in `tests/test_slots.py`, so whoever fixes the regex is forced to notice and remove the marker.
 
 ### Open, worth a decision rather than a default
+
+- **The 20% `Fluid_Sensitive` disagreement (NEW, unexplained, potentially large).** 4,560 of 24,371
+  series that `train_series.csv` marks structural are classified fluid-sensitive from their DICOM
+  headers. Either the header classifier is wrong at scale, or the CSV flag does not mean what the
+  column name says — recall `Fluid_Sensitive` and `Fat_Suppression` are **identical in all 24,371
+  rows**, so between them they carry one bit, and which bit is unverified. Both readings are
+  actionable and they point opposite ways, so this needs measuring before anything is changed.
+  Cheap next step: the scan already wrote `t1_scan_series.csv` with the per-series text, header
+  verdict and CSV flag — cross-tabulate the disagreements by description to see whether they
+  cluster on a vendor, a sequence family, or a plane. If the CSV flag is the more reliable of the
+  two, slot routing should read it directly and this is the largest single correctness lever left.
+- **Encoder scaling has never been re-tested under `xattn`.** `knee-train-slots-tpu-base` calls
+  `SlotNet(...)` with no `head=` argument, so it used the pooled head. Same for the 448 run. Both
+  nulls predate the architecture change, and `XAttnHead`'s own docstring names that pooling as the
+  cause. 448 is being re-tested now; base is not, and remains genuinely open despite the forum's
+  independent null (which was also measured on a pooled architecture).
 
 - **Menisci remain the weak labels** (Lateral 0.777, ACL 0.742, MCL 0.747 at 12-slice epoch 9).
   These are the focal, few-slice findings the domain primer predicted would be hardest. More slices
@@ -689,10 +755,20 @@ Newest first. One short entry per session: what changed, what was learned.
   weighting, slot routing (including that `COR_T1` is never faked from a fluid coronal), frame
   preparation, and both heads — the important one being that a masked slot provably cannot change a
   logit, plus its converse so an all-masking bug can't pass trivially.
-- **Writing them found the T1 underscore bug** (section above). Recorded as a strict xfail rather
-  than patched: the fix changes slot routing and invalidates published caches. Pulled
-  `train_series.csv` locally to size the population at risk; prevalence still needs a header scan
-  on Kaggle.
+- **Writing them found the T1 underscore bug**, then `knee-t1-scan` measured it and **closed it as
+  immaterial** (23 studies, 0.52%). The scan's real value was two by-products: the identical flaw in
+  the STIR guard, which would have made the "obvious" fix a regression, and the unexplained 20%
+  disagreement with the host's `Fluid_Sensitive` flag. Both are recorded above.
+- **slot-v3 scored LB 0.864**, a new best, and the CV↔LB offset held at +0.046. CV remains usable
+  for ranking experiments.
+- **Found that the 448 and DINOv2-base nulls were both measured on the pooled head**, not `xattn` —
+  neither notebook passes `head=`. 448 is being re-tested; base is now genuinely open again.
+- Cross-family ensembling (slot-v2 + slot-v3) was considered and **rejected on cost**: the two
+  families run on different test caches (3-slice vs 6-slice) and `band_indices` does not make the 3
+  a subset of the 6, so it needs two cache builds. One build already consumes ~6.5 h of the 9 h cap.
+- **`knee-submit-6slice.log` came back 0 bytes** — the same failure recorded in session 13. Kaggle
+  does not expose logs for submission reruns, so the cache-build/inference split of that 6.5 h is
+  not observable. Treat submission-rerun timing as unmeasurable and budget conservatively.
 
 ### 2026-08-08 — Session 8 (LLM extractor built, first full run interrupted)
 - Built `src/extract/llm.py` + `scripts/extract_labels_llm.py`: local-Ollama LLM extractor,
