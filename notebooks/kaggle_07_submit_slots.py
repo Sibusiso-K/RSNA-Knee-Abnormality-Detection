@@ -89,7 +89,11 @@ if _src and not os.path.exists(PKG + "/src"):
 sys.path.insert(0, PKG)
 
 from src.data.cache import N_SLICE, build_study      # noqa: E402
-from src.data.slots import IMG, N_SLOT               # noqa: E402
+from src.data.slots import GROUP, IMG, N_SLOT        # noqa: E402
+
+N_GROUPS = max(1, N_SLICE // GROUP)
+if N_SLICE % GROUP:
+    raise SystemExit(f"test cache {N_SLICE} slices/slot is not a multiple of {GROUP}")
 from src.labels import TARGETS                        # noqa: E402
 
 # Decoding depends on packages that differ between Kaggle's CPU/GPU image and
@@ -118,6 +122,7 @@ for target in TARGETS:
     submission[target] = 0.5
 
 log(f"test: {len(test)} studies, {len(test_series)} series")
+log(f"test cache: {N_SLICE} slices/slot = {N_GROUPS} group(s) of {GROUP}")
 
 
 def write_and_exit(reason):
@@ -273,7 +278,19 @@ try:
             # batch. A rank is a position within a column, so it cannot be
             # computed on 8 studies at a time.
             for member, net in enumerate(models):
-                probs = torch.sigmoid(net(x, m).float())
+                # The encoder takes a 2.5D TRIPLET. A test cache holding more
+                # slices per slot holds several groups of three, and the models
+                # were trained by drawing one group per step - so inference
+                # averages logits over every group, exactly as training sampled
+                # them. Feeding all slices as channels would not even have the
+                # right shape; feeding a differently-sampled triplet would have
+                # the right shape and be quietly wrong.
+                acc = None
+                for g in range(N_GROUPS):
+                    xg = x[:, :, g * GROUP:(g + 1) * GROUP]
+                    lg = net(xg, m).float()
+                    acc = lg if acc is None else acc + lg
+                probs = torch.sigmoid(acc / N_GROUPS)
                 if XLA:
                     # Cut the graph per member. Without it XLA traces every
                     # member of every batch into one graph and compiles the lot
