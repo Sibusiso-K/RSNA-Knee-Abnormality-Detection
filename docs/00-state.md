@@ -64,10 +64,14 @@ python -m pytest tests/ -q                          # 60 tests (old pipeline onl
 kaggle kernels push -p notebooks/kaggle/<name>      # accelerator comes from kernel-metadata.json
 ```
 
-> **Test-coverage gap.** All 60 tests cover the *old* pipeline — report extractors, EfficientNet
-> net, CV harness. `src/data/slots.py`, `src/data/cache.py` and `src/model/slotnet.py` — the code
-> that actually produced 0.856 — have **zero tests**. The slot ordering in `SLOTS` is load-bearing
-> (a cache written under one ordering cannot be read under another) and nothing guards it.
+**Tests: 137 passing + 4 xfailed** (was 60). `tests/test_slots.py` closed the coverage gap on the
+slot pipeline — `SLOTS` ordering is now pinned, the laterality mirror is asserted per plane
+(sagittal reverses slice order, coronal/axial flip the frame, and the two must not agree), and both
+heads are checked so a masked slot provably cannot move a logit.
+
+> ⚠️ **Writing those tests found a live bug in `classify_weighting` — see "The T1 underscore bug"
+> below.** It is recorded as a `strict=True` xfail rather than patched, because the fix changes slot
+> routing and therefore invalidates every published cache.
 
 ## Older next-actions (Phase 1 text extraction — superseded by the imaging work above)
 
@@ -367,6 +371,41 @@ converts "does our notebook even produce a scoreable file" from an unknown into 
 4. **Put tests on the slot code before changing it further.** It has none, and `SLOTS` ordering
    silently invalidates caches (see the test-coverage gap above).
 
+### The T1 underscore bug (found 2026-08-14, NOT yet fixed)
+
+`_T1_RX` in `src/data/slots.py` matches with `\b`. **Underscore is a word character** in Python
+regex (`\w == [A-Za-z0-9_]`), so `\bt1w\b` cannot match `t1w_sag` — there is no boundary between
+`w` and `_`. Demonstrated, not inferred:
+
+| Series text | T1 matched | Classified |
+|---|---|---|
+| `T1`, `T1W`, `t1w sag`, `COR T1W`, `T1-weighted`, `T1W/SE` | ✅ | structural — correct |
+| `t1w_sag`, `T1W_TSE`, `t1_tse_sag`, `SAG_T1W_TSE` | ❌ | **fluid-sensitive — wrong** |
+
+Underscore-separated descriptions are the Siemens house style, so this is not a hypothetical
+spelling. The same flaw sits in the `\bt1[ _-]?tse\b` branch, which handles an *internal* underscore
+but still breaks on a trailing one.
+
+**Why it matters.** A misclassified T1 series is routed into a *fluid* slot, so `COR_T1`/`SAG_T1`
+are left empty and masked out — and those slots exist precisely because cartilage thinning and
+marrow signal, i.e. **the three OA labels**, read on the structural sequences. Worse, the structural
+series then competes for a fluid slot on "most files wins" and can displace a genuine one.
+
+**Population at risk, from `train_series.csv`:** 10,361 of 24,371 series (42.5%) are structural,
+spread across **all 4,407 studies**; 9,182 of those are sagittal or coronal, i.e. `SAG_T1`/`COR_T1`
+candidates.
+
+**Prevalence is unmeasured** and cannot be measured locally — series text lives in the DICOM headers
+(`SeriesDescription`, `SequenceName`, `ScanOptions`, `ScanningSequence`), which are Kaggle-only.
+**Measure before fixing**: one cheap header-scan notebook counting how many structural series carry
+an underscore-separated T1 name turns this from "real by construction" into a sized defect. That
+number decides whether it is worth the cost below.
+
+**Why it was not just patched.** `classify_weighting` feeds `src/data/cache.py`. Changing it changes
+slot routing, so every published cache is invalidated and any new run is not comparable with the
+checkpoints behind LB 0.856 — a rebuild-and-retrain, not a one-line fix. It is a `strict=True` xfail
+in `tests/test_slots.py`, so whoever fixes the regex is forced to notice and remove the marker.
+
 ### Open, worth a decision rather than a default
 
 - **Menisci remain the weak labels** (Lateral 0.777, ACL 0.742, MCL 0.747 at 12-slice epoch 9).
@@ -644,6 +683,16 @@ Newest first. One short entry per session: what changed, what was learned.
   competition-derived labels are committed — that would be prohibited sharing.
 - Local environment note: the Windows 260-char path limit breaks `pip install torch` inside the
   project tree. The working venv lives at `C:\rsna-venv`, outside it.
+- **Added `tests/test_slots.py` — 60 tests → 137 passing + 4 xfailed.** Covers the frozen `SLOTS`
+  order, the geometry constants (336 px is patch-14 clean, 130 mm/336 px = 0.387 mm/px), the
+  per-plane laterality mirror and its involution, the "centre not corner" side read, sequence
+  weighting, slot routing (including that `COR_T1` is never faked from a fluid coronal), frame
+  preparation, and both heads — the important one being that a masked slot provably cannot change a
+  logit, plus its converse so an all-masking bug can't pass trivially.
+- **Writing them found the T1 underscore bug** (section above). Recorded as a strict xfail rather
+  than patched: the fix changes slot routing and invalidates published caches. Pulled
+  `train_series.csv` locally to size the population at risk; prevalence still needs a header scan
+  on Kaggle.
 
 ### 2026-08-08 — Session 8 (LLM extractor built, first full run interrupted)
 - Built `src/extract/llm.py` + `scripts/extract_labels_llm.py`: local-Ollama LLM extractor,
