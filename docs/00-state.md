@@ -457,13 +457,48 @@ misses, and the CSV is right in every sampled case. Three distinct causes:
 from `SAG_FLUID_NOFS`. Reading `Fat_Suppression` from the CSV fixes all three causes at once and
 deletes the regex from the routing path.
 
-**Not yet measured: study-level slot impact.** `pick_slot_series` needs `n_files` to resolve which
-series wins a slot, and the scan did not save it. Re-running with `uid` + `n_files` retained is
-another ~11 min CPU job and turns this into the same decision the T1 bug got. Do that before
-committing to a rebuild — 592 series is an upper bound on studies affected, not a count of them.
+#### MEASURED 2026-08-14 by `knee-fatsat-scan`: **11x the T1 bug — worth doing**
 
-**Do not bundle this with the 448 run.** That run is a controlled comparison against the 336 px
-baseline of 0.8207; changing slot routing at the same time confounds it. Land 448 first, then this.
+| | T1 underscore (closed) | Fat-suppression |
+|---|---|---|
+| Series changed | 32 (0.13%) | **656 (2.69%)** |
+| Studies affected | 23 (0.52%) | **255 (5.79%)** |
+
+656 = 592 the regex missed plus 64 the reverse. **484 of the 656 are Axial**, and the slot table
+shows why that matters:
+
+| Slot | Filled now → fixed | gained | lost | swapped |
+|---|---|---|---|---|
+| **AX_FLUID_FS** | 90.38% → **94.26%** | **171** | 0 | 16 |
+| SAG_FLUID_FS | 93.24% → 94.17% | 45 | 4 | 16 |
+| COR_FLUID_FS | 95.55% → 96.39% | 40 | 3 | 5 |
+| SAG_FLUID_NOFS | 57.86% → 57.48% | 15 | 32 | 26 |
+| COR_T1 / SAG_T1 | unchanged | 0 | 0 | 0 |
+
+The `SAG_FLUID_NOFS` net *loss* is the fix working, not a regression: series correctly reclassified
+as fat-suppressed leave the NOFS slot for the FS slot. `COR_T1`/`SAG_T1` are untouched because
+`want_fatsat` is `None` there — a good sanity check that the change is confined to the axis it
+should be.
+
+**The axial gain is the interesting part.** `SLOT_PRIOR_TABLE` makes `AX_FLUID_FS` (slot 2) a
+preferred slot for **PF OA, Effusion, Synovitis, Contusion and Fracture** — and PF OA is one of the
+weak labels (0.755). The single biggest contributor is `t2_de3d_we_tra_Patella_fit_T` (258 series),
+a **patella-specific axial water-excitation sequence**: exactly the acquisition PF OA is read on,
+invisible to the regex because `water[ _-]?excit` does not match the `we` abbreviation. Others:
+`STIR_aTSE_*` (49), `t2_tirm_tra` (63), `SMART FAT FSEfw` (75), `AXI DER`/`AXI IZQ` (27).
+
+**Prediction that was wrong, recorded so it is not repeated:** presence changes were expected to be
+the minor effect and identity changes the dominant one. It is the other way round — 232 studies
+(5.26%) change a slot's presence versus 62 (1.41%) its identity. Many studies had *no* recognised
+axial fat-sat series at all, so the slot was empty rather than wrongly filled.
+
+**Sequencing — do not rebuild the cache twice.** Land the 448 fold-0 number first, then build one
+cache at the winning resolution *with* the fat-sat fix and validate it on fold 0 against that
+resolution's own baseline. Bundling both changes into one run would confound them; rebuilding twice
+wastes a full cache build.
+
+**Still unmeasured: the AUC effect.** 5.79% of studies gaining or changing one slot out of ~4.5
+filled is a modest perturbation, and slot fill is not score. The honest test is a fold-0 retrain.
 
 ### (historical) The T1 underscore bug as first characterised
 
