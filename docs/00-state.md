@@ -366,14 +366,38 @@ converts "does our notebook even produce a scoreable file" from an unknown into 
 
 ## Immediate next steps (after session 18)
 
-1. **Re-test resolution under `xattn` — in flight.** `knee-cache-448x6-s0/s1` are building a
-   448 px × 6-slice cache (14.83 GB per shard, vs the 16.7 GB 12-slice shards that already worked).
-   Then train **fold 0 only** and compare against the known fold-0 baseline **0.8207**. One number,
-   ~1.3 h TPU, decisive. Only if it wins should the remaining four folds be spent.
-2. **Stop scaling slices** — 12 slices/slot scored 0.8161 on fold 0 vs 6 slices' 0.8207, both under
-   `xattn`, so the comparison is clean and coverage is saturated. **Encoder scaling is NOT settled**
-   — that null was measured on the pooled head (see open questions).
-3. **The old point 2, retained because the reasoning still holds:**
+1. **Build the fat-suppression cache at 336 px and validate on fold 0.** This is now the only
+   unmeasured lever with a measured mechanism behind it: 255 studies (5.79%) change slot
+   assignment, concentrated on `AX_FLUID_FS`, which is a prior slot for PF OA (0.755, weak).
+   Build at **336, not 448** — see the null below.
+2. **Resolution is a null under `xattn` too — RESOLVED 2026-08-14.** `knee-train-448x6` fold 0
+   scored **0.8218 vs the 336 px baseline's 0.8207: +0.0011**, inside the 0.0020 noise floor. The
+   checkpoint confirms a clean comparison (`size=448`, `head=xattn`, `slices_per_slot=6`,
+   `variant=small`, `labels=labels_blend_v1.csv`, `n_groups=151`) — only the pixel scale differed.
+   **The hypothesis that the pooling bottleneck caused the original 448 null is not supported.**
+   It cost ~1.78x the encoder compute for nothing.
+3. **This also weakens the case for re-testing DINOv2-base under `xattn`.** That re-test rested on
+   the same reasoning — "the null was measured on the pooled head, so it does not count" — and the
+   reasoning has now failed its first test. Not disproven, but no longer worth quota ahead of the
+   fat-suppression rebuild.
+4. **Stop scaling slices** — 12 slices/slot scored 0.8161 vs 6 slices' 0.8207, both under `xattn`.
+
+### The pattern across every measured lever
+
+| Lever | Category | Result |
+|---|---|---|
+| Laterality normalisation, slot routing, crop geometry | **what the model sees** | large gains |
+| Slice count 6 → 12 | how much it sees | −0.0046 |
+| Resolution 336 → 448 (pooled head) | how finely it sees | −0.0014 |
+| Resolution 336 → 448 (**xattn**) | how finely it sees | **+0.0011** |
+| Encoder small → base (pooled head) | how much model | −0.0005 |
+
+**Changing *which* acquisition and *which* anatomical position reaches the model pays. Changing how
+much or how finely it is rendered does not.** Four independent measurements now agree. This is the
+single most useful generalisation the project has, and it points directly at the fat-suppression
+fix, which changes *which* series fills a slot.
+
+5. **The old point 2, retained because the reasoning still holds:**
    - 12 slices/slot scored **0.8161 on fold 0 vs 6 slices' 0.8207** — slightly *worse*, for 2× the
      cache RAM (33.36 GB vs 16.68 GB) and a longer run. Coverage saturated between 6 and 12.
    - DINOv2-small → base is a null (see the decision log). Independently corroborated on the forum
@@ -798,6 +822,9 @@ Decisions made and why, so we don't relitigate them. Append, don't rewrite.
 | 2026-08-14 | **Stop scaling the encoder.** DINOv2-small is the production encoder | small → base measured a null here, and the forum reports +0.0011 against a 0.0020 noise floor. 4× the parameters for nothing measurable |
 | 2026-08-14 | **Stop scaling slice count at 6/slot** | 12 slices scored 0.8161 on fold 0 vs 6 slices' 0.8207 — worse, at 2× the cache RAM. Coverage saturated |
 | 2026-08-14 | **Push to git every session**; Kaggle is not the source of truth | 4 days and an entire pipeline rebuild existed only as Kaggle notebooks. A deleted kernel would have been unrecoverable work |
+| 2026-08-14 | **336 px is the production resolution. Stop testing resolution** | 448 under `xattn` measured +0.0011 against a 0.0020 noise floor, for 1.78x the compute. Both the pooled-head and `xattn` tests now agree |
+| 2026-08-14 | **Every checkpoint must carry its own config** (`size`, `head`, `variant`, `pool`, `score`, `labels`) | Kaggle logs came back 0 bytes for the third time. The 448 result was recoverable *only* because the checkpoint records `size=448` and `score`. A run whose configuration lives solely in its log is a run that can evaporate |
+| 2026-08-14 | Prefer routing fixes over capacity/resolution/coverage increases | Four independent measurements: changing *which* acquisition reaches the model pays, changing how much or how finely it is rendered does not |
 
 ## Session log
 
