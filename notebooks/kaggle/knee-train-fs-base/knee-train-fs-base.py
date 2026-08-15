@@ -479,7 +479,8 @@ def run_fold(fold):
                 log(f"  e{epoch} {step}/{steps} loss {float(loss.item()):.4f}")
 
         epoch_loss = float(running.item()) / max(steps, 1) if running is not None else float("nan")
-        score, per_label = macro_auc(valid_y, predict(model, valid_rows))
+        valid_pred = predict(model, valid_rows)
+        score, per_label = macro_auc(valid_y, valid_pred)
         line = (f"  epoch {epoch}: loss {epoch_loss:.4f}  "
                 f"grouped-CV macro AUC {score:.4f}  ({time.time() - t_epoch:.0f}s)")
         if len(gold_rows):
@@ -511,6 +512,17 @@ def run_fold(fold):
                 },
                 f"knee_slot_fold{fold}.pth",
             )
+
+            # OOF predictions at the best epoch, for pseudo-labelling.
+            #
+            # Written here, not recomputed later, because these are the only
+            # predictions on studies this model never trained on. A prediction
+            # from a model that saw the study is circular: blending it back
+            # into the labels inflates CV and does nothing for the leaderboard.
+            oof = pd.DataFrame(valid_pred, columns=TARGETS)
+            oof.insert(0, ID, valid_df[ID].values)
+            oof["fold"] = fold
+            oof.to_csv(f"oof_fold{fold}.csv", index=False)
             log(f"   saved (best {best:.4f})")
     return best
 
