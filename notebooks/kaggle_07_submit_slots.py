@@ -188,7 +188,13 @@ try:
             return None
         return candidates[0][0]
 
-    checkpoints = sorted(glob.glob(f"{INPUT}/**/knee_slot_fold*.pth", recursive=True))
+    # Both naming conventions: ours (knee_slot_fold*.pth) and the public
+    # members (m_*.pt). A mixed ensemble is the point, so the glob cannot be
+    # tied to our own filenames.
+    checkpoints = sorted(
+        glob.glob(f"{INPUT}/**/knee_slot_fold*.pth", recursive=True)
+        + glob.glob(f"{INPUT}/**/m_*.pt", recursive=True)
+    )
     if not checkpoints:
         write_and_exit("no checkpoints found")
     log(f"checkpoints: {[os.path.basename(c) for c in checkpoints]}")
@@ -200,10 +206,40 @@ try:
     # DINOv2-base (768) alongside five smalls (384). Resolving the encoder from
     # checkpoints[0] and reusing it would build every member on that width and
     # die on the first mismatch. Each checkpoint names its own.
+    def normalise(blob):
+        """Any checkpoint -> (state_dict, pool, prior, head).
+
+        Public members published by other competitors use the same SlotHead
+        parameter names as ours - head.slot_emb / query / proj / out - and the
+        same six slots in the same order, but call the encoder `backbone`
+        where we call it `vit`. Their manifest also records pool="cls_mean"
+        and prior=False, so their checkpoints carry no head.slot_prior; ours
+        registers that buffer unconditionally and it is all zeros when the
+        prior is off, which is exactly what prior=False means.
+
+        So the mapping is a rename plus one legitimately-absent buffer. That
+        is checked rather than assumed below: any OTHER missing key, or any
+        unexpected one, means the architectures genuinely differ and the run
+        must stop rather than load a partly-initialised model and score it.
+        """
+        sd = blob["model"] if "model" in blob else blob
+        if any(k.startswith("backbone.") for k in sd):
+            sd = {(k.replace("backbone.", "vit.", 1) if k.startswith("backbone.")
+                   else k): v for k, v in sd.items()}
+        cfg = blob.get("config") or {}
+        pool = cfg.get("pool") or blob.get("pool") or "cls_mean_focal"
+        prior = cfg.get("prior", blob.get("prior", True))
+        head = blob.get("head")
+        if head is None:
+            head = "xattn" if any(k.startswith("head.cross_attn") for k in sd) else "slot"
+        return sd, pool, bool(prior), head
+
     models = []
     for path in checkpoints:
         blob = torch.load(path, map_location="cpu", weights_only=False)
-        hidden = int(blob["model"]["vit.embeddings.cls_token"].shape[-1])
+        _probe = blob["model"] if "model" in blob else blob
+        hidden = int(next(v for k, v in _probe.items()
+                          if k.endswith("embeddings.cls_token")).shape[-1])
         dinov2 = find_dinov2(hidden)
         if dinov2 is None:
             write_and_exit(f"no mounted DINOv2 with hidden_size {hidden}")
@@ -217,12 +253,19 @@ try:
         # wrong is not subtle - load_state_dict fails outright - but defaulting
         # to "slot" and failing is exactly what happened here, so the model is
         # built from what the file contains rather than from a default.
-        head = blob.get("head")
-        if head is None:
-            head = ("xattn" if any(k.startswith("head.cross_attn")
-                                   for k in blob["model"]) else "slot")
-        net = SlotNet(dinov2, pool=blob.get("pool", "cls_mean_focal"), head=head)
-        net.load_state_dict(blob["model"])
+        sd, pool, prior, head = normalise(blob)
+        net = SlotNet(dinov2, pool=pool, prior=prior, head=head)
+        result = net.load_state_dict(sd, strict=False)
+        # slot_prior is a zeros buffer when prior=False, so its absence is
+        # expected for members trained without the anatomy tilt. Nothing else is.
+        allowed = {"head.slot_prior"} if not prior else set()
+        bad_missing = set(result.missing_keys) - allowed
+        if bad_missing or result.unexpected_keys:
+            write_and_exit(
+                f"{os.path.basename(path)} does not fit SlotNet: "
+                f"missing {sorted(bad_missing)[:4]} unexpected "
+                f"{sorted(result.unexpected_keys)[:4]}"
+            )
         net.eval().to(device)
         models.append(net)
         log(f"  {os.path.basename(path)}: fold {blob.get('fold')} "
