@@ -5,7 +5,7 @@
   "language": "python",
   "kernel_type": "script",
   "is_private": true,
-  "enable_gpu": false,
+  "enable_gpu": true,
   "enable_tpu": false,
   "enable_internet": false,
   "keywords": [],
@@ -24,5 +24,5 @@
     "metaresearch/dinov2/PyTorch/small/1"
   ],
   "docker_image": "gcr.io/kaggle-images/python@sha256:dafd4ce5668bbf1ad422e4c109e0f18c9623c3a7c7f48b0235f13142755c40b9",
-  "machine_shape": "None"
+  "machine_shape": "NvidiaTeslaT4"
 }
