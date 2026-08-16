@@ -19,12 +19,12 @@ anything you haven't verified.
 
 | | |
 |---|---|
-| Best scored LB | **0.856** (submission `55490353`) |
-| Also pending | `55503594` — 5 folds, 6 slices/slot, CV 0.8185 |
+| Best scored LB | **0.864** (submission `55503594`) — 5 folds, 6 slices/slot, CV 0.8185 |
+| Previous | 0.856 (6-member cross-family mix) |
 | Rank | ~654 / 1383 · top-10 cutoff **0.936** |
 | Best config | DINOv2-small + `head="xattn"` + **6 slices/slot** + 336px + `labels_blend_v1` |
 
-Submission history: 0.783 (old pipeline) → 0.850 → 0.856.
+Submission history: 0.783 (old pipeline) → 0.850 → 0.856 → **0.864**.
 
 ## The one thing that worked
 
@@ -42,8 +42,9 @@ Capacity and pixel density are not the constraint.
 
 - **Fold noise is ±0.011.** Single-fold differences under ~0.02 are unmeasurable.
   Say so rather than reporting them as gains.
-- **CV → LB offset is roughly +0.055** at this operating point (CV 0.7949 → LB
-  0.850). Re-measure rather than extrapolating far from it.
+- **CV → LB offset is roughly +0.045 to +0.055.** Two measured points: CV 0.7949
+  → LB 0.850, and CV 0.8185 → LB 0.864. It drifts; re-measure rather than
+  extrapolating far from it.
 - `gold58` scores against real annotations but n=58; a 0.02 spread there is noise.
   Three readings from that ruler have already been overturned.
 
@@ -104,5 +105,5 @@ what's been learned here came from experiments that returned nothing, and
 mislabelling noise as progress would have sent the whole project down a dead
 end. When a result looks surprising, check the inputs before believing it; four
 times out of four so far, a surprising number meant a broken input rather than a
-discovery. Don't narrate optimism you can't support: 0.856 against a 0.936
+discovery. Don't narrate optimism you can't support: 0.864 against a 0.936
 cutoff is real progress and still a long way short.
