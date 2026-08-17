@@ -108,6 +108,12 @@ UNFREEZE_LAST = 6
 WEIGHT_DECAY = 0.02
 VARIANT = os.environ.get("VARIANT", "small")
 POOL = os.environ.get("POOL", "cls_mean_focal")
+#: "slot" | "xattn" | "gattn". Config rather than a sed patch in build.sh,
+#: because the head now decides how the data is fed as well: `gattn` takes
+#: every slice group at once and the others take one sampled triplet, and a
+#: sed that patched the model while leaving the sampling alone would produce a
+#: complete run that measured nothing.
+HEAD = os.environ.get("HEAD", "slot")
 TRAIN_FOLDS = [int(f) for f in os.environ.get("FOLDS", "0").split(",")]
 N_FOLDS = 5
 TRAIN_SIZE = int(os.environ.get("SIZE", str(IMG)))
@@ -244,6 +250,21 @@ log(f"slices/slot {cache.shape[2]} = {N_GROUPS} group(s) of {GROUP}")
 def take_group(rows, g):
     """Slice GROUP consecutive channels out of the cached slices."""
     return cache[rows][:, :, g * GROUP:(g + 1) * GROUP]
+
+
+#: `gattn` takes the whole slice axis at once; every other head takes one
+#: triplet and lets the harness average logits over groups afterwards.
+#:
+#: That averaging is what this head exists to remove, so the sampling has to go
+#: with it. Leaving `np.random.randint(N_GROUPS)` in place would hand the new
+#: head one group per step and quietly test nothing — the run would complete,
+#: the architecture would look like it had been measured, and the answer would
+#: be meaningless.
+ALL_GROUPS = HEAD == "gattn"
+
+
+def take_input(rows, g):
+    return cache[rows] if ALL_GROUPS else take_group(rows, g)
 if not (len(index) == len(cache) == len(mask)):
     raise SystemExit(
         f"cache/index length mismatch: index {len(index)} cache {len(cache)} "
@@ -377,13 +398,17 @@ def predict(model, rows):
     for start in range(0, len(rows), BATCH):
         sel = rows[start : start + BATCH]
         m = torch.from_numpy(mask[sel]).float().to(device)
+        # `gattn` reads every group inside one forward pass, so there is
+        # nothing to average here. For the other heads the loop IS the model's
+        # only access to the slice axis.
+        passes = 1 if ALL_GROUPS else N_GROUPS
         acc = None
-        for g in range(N_GROUPS):
-            x = torch.from_numpy(take_group(sel, g)).to(device)
+        for g in range(passes):
+            x = torch.from_numpy(take_input(sel, g)).to(device)
             with autocast():
                 logits = model(x, m, TRAIN_SIZE).float()
             acc = logits if acc is None else acc + logits
-        probs = torch.sigmoid(acc / N_GROUPS)
+        probs = torch.sigmoid(acc / passes)
         if XLA:
             xm.mark_step()
         out.append(probs.cpu().numpy())
@@ -422,7 +447,8 @@ def run_fold(fold):
     log(f"\n=== fold {fold}: train {len(train_df)} / valid {len(valid_df)} ===")
     dinov2 = DINOV2
 
-    model = SlotNet(dinov2, unfreeze_last=UNFREEZE_LAST, pool=POOL).to(device)
+    model = SlotNet(dinov2, unfreeze_last=UNFREEZE_LAST, pool=POOL,
+                    head=HEAD).to(device)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     # Log the hidden size, not just the path. "small" and "base" mount at
     # similar-looking paths, differ by 2x in feature width and ~4x in
@@ -462,7 +488,7 @@ def run_fold(fold):
                 continue
             rows = train_rows[sel]
             g = np.random.randint(N_GROUPS)
-            x = torch.from_numpy(take_group(rows, g)).to(device)
+            x = torch.from_numpy(take_input(rows, g)).to(device)
             m = torch.from_numpy(mask[rows]).float().to(device)
             y = torch.from_numpy(train_y[sel]).to(device)
 

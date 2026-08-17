@@ -225,8 +225,147 @@ class XAttnHead(nn.Module):
         return spatial + self.pooled(pooled, mask)
 
 
+class GroupAttnHead(nn.Module):
+    """(B, S, G, T, D) tokens + (B, S) mask -> (B, 12) logits.
+
+    **The fix for slice saturation.**
+
+    `XAttnHead` restored spatial access within a triplet and paid: it is what
+    the 0.864 submission runs. But the SLICE axis is still outside the model.
+    Training draws one random group of three slices per step and inference
+    averages the resulting logits:
+
+        for g in range(N_GROUPS): acc += net(take_group(x, g), m)
+
+    So a study with six slices per slot is two independent predictions averaged,
+    not one prediction with twice the evidence. That is exactly the shape of
+    what we measured — 3 -> 6 slices gained **+0.0236**, concentrated on focal
+    findings, and 6 -> 12 gave **-0.005**. A fracture visible in one group gets
+    averaged with a group where it is not, and diluted; doubling the groups
+    doubles the dilution as fast as it adds evidence, so the curve flattens.
+
+    Here every group is a token source in ONE attention. A query for Fracture
+    attends across all S x G x T tokens at once, so it can concentrate on the
+    slice group where the cortical break actually is and ignore the rest —
+    selection instead of averaging. Nothing is thrown away and nothing is
+    diluted, and the through-plane position becomes something the model can
+    attend to rather than something the harness averages over.
+
+    Cost is one attention over S*G*T keys: at 6 slots x 2 groups x 577 tokens
+    that is 6,924 keys for 12 queries, ~83k pairs. Negligible next to the
+    encoder, which does the same S*G passes either way.
+
+    The queries also attend to EACH OTHER before reading the tokens. The twelve
+    findings co-occur strongly — effusion with synovitis, medial with lateral
+    OA — and a query that knows what the others found is better placed than
+    twelve queries deciding in isolation. It is 12x12, so it is free.
+    """
+
+    def __init__(self, dim: int, pooled_dim: int, n_slot: int = N_SLOT,
+                 n_out: int = len(TARGETS), hidden: int = 256, heads: int = 8,
+                 dropout: float = 0.2, prior: bool = True,
+                 max_groups: int = 8, depth: int = 2) -> None:
+        super().__init__()
+        self.n_out = n_out
+        self.depth = depth
+        self.token_proj = nn.Sequential(
+            nn.LayerNorm(dim), nn.Linear(dim, hidden), nn.GELU()
+        )
+        # Which slot AND which slice group a token came from. The encoder sees
+        # neither - it processes every (slot, group) triplet independently - so
+        # both are added here. `max_groups` is fixed so a model trained at two
+        # groups can be scored at four without a shape error; unused rows just
+        # never receive gradient.
+        self.slot_emb = nn.Embedding(n_slot, hidden)
+        self.group_emb = nn.Embedding(max_groups, hidden)
+        self.max_groups = max_groups
+
+        self.query = nn.Parameter(torch.randn(n_out, hidden) * 0.02)
+        self.target_group_emb = nn.Embedding(len(GROUP_NAMES), hidden)
+        self.register_buffer(
+            "group_of_target", torch.tensor(GROUP_OF_TARGET, dtype=torch.long)
+        )
+
+        # Two rounds of (queries talk -> queries read -> queries think). One
+        # round is a single static look; iterating lets the second look be
+        # informed by what the first found, which is the whole argument for
+        # attention over pooling.
+        self.self_attn = nn.ModuleList([
+            nn.MultiheadAttention(hidden, heads, dropout=dropout, batch_first=True)
+            for _ in range(depth)
+        ])
+        self.cross_attn = nn.ModuleList([
+            nn.MultiheadAttention(hidden, heads, dropout=dropout, batch_first=True)
+            for _ in range(depth)
+        ])
+        self.ffn = nn.ModuleList([
+            nn.Sequential(nn.Linear(hidden, hidden * 2), nn.GELU(),
+                          nn.Dropout(dropout), nn.Linear(hidden * 2, hidden))
+            for _ in range(depth)
+        ])
+        self.norm_self = nn.ModuleList([nn.LayerNorm(hidden) for _ in range(depth)])
+        self.norm_cross = nn.ModuleList([nn.LayerNorm(hidden) for _ in range(depth)])
+        self.norm_ffn = nn.ModuleList([nn.LayerNorm(hidden) for _ in range(depth)])
+
+        # The pooled path is kept, exactly as XAttnHead keeps it: it is what
+        # the working submission is built on, and discarding a component that
+        # works to test an addition confounds the measurement.
+        self.pooled = SlotHead(pooled_dim, n_slot=n_slot, n_out=n_out,
+                               hidden=hidden, dropout=dropout, prior=prior)
+
+        self.drop = nn.Dropout(dropout)
+        self.heads = nn.ModuleList([
+            nn.Sequential(
+                nn.LayerNorm(hidden), nn.Linear(hidden, hidden // 2), nn.GELU(),
+                nn.Dropout(dropout), nn.Linear(hidden // 2, 1),
+            )
+            for _ in range(n_out)
+        ])
+
+    def forward(self, tokens: torch.Tensor, pooled: torch.Tensor,
+                mask: torch.Tensor) -> torch.Tensor:
+        b, s, g, t, _ = tokens.shape
+        if g > self.max_groups:
+            raise ValueError(
+                f"{g} slice groups exceeds max_groups={self.max_groups}; the "
+                f"group embedding has no row for the extra ones"
+            )
+        x = self.token_proj(tokens)                                # (B,S,G,T,H)
+        x = x + self.slot_emb.weight.view(1, s, 1, 1, -1)
+        x = x + self.group_emb.weight[:g].view(1, 1, g, 1, -1)
+        x = x.reshape(b, s * g * t, -1)
+
+        # An absent slot is absent in every one of its groups. Masking rather
+        # than feeding zeros: a zero image is a black image, and the encoder
+        # maps it to a confident feature like any other input.
+        key_pad = (mask < 0.5).unsqueeze(-1).unsqueeze(-1)
+        key_pad = key_pad.expand(b, s, g, t).reshape(b, s * g * t)
+
+        q = self.query + self.target_group_emb(self.group_of_target)
+        q = q.unsqueeze(0).expand(b, -1, -1)                        # (B,O,H)
+
+        for i in range(self.depth):
+            h = self.norm_self[i](q)
+            q = q + self.self_attn[i](h, h, h, need_weights=False)[0]
+            h = self.norm_cross[i](q)
+            q = q + self.cross_attn[i](h, x, x, key_padding_mask=key_pad,
+                                       need_weights=False)[0]
+            q = q + self.ffn[i](self.norm_ffn[i](q))
+
+        q = self.drop(q)
+        spatial = torch.cat(
+            [self.heads[i](q[:, i]) for i in range(self.n_out)], dim=1
+        )
+        return spatial + self.pooled(pooled, mask)
+
+
 class SlotNet(nn.Module):
-    """(B, S, 3, H, W) uint8 + (B, S) mask -> (B, 12) logits."""
+    """(B, S, C, H, W) uint8 + (B, S) mask -> (B, 12) logits.
+
+    `C` is 3 for the `slot` and `xattn` heads — one 2.5D triplet per slot. For
+    `gattn` it is `3 * G`: every slice group the cache holds, handed to the
+    model together instead of sampled one at a time by the training loop.
+    """
 
     #: DINOv2 is patch-14: the input side must be a multiple of 14 or the patch
     #: embedding drops a partial patch and the position embeddings stop lining
@@ -262,7 +401,10 @@ class SlotNet(nn.Module):
             param.requires_grad = True
 
         dim = int(self.vit.config.hidden_size)
-        if head == "xattn":
+        if head == "gattn":
+            self.head = GroupAttnHead(dim, pooled_dim=dim * parts,
+                                      dropout=dropout, prior=prior)
+        elif head == "xattn":
             # Tokens go in at the encoder's own width; the pooled path keeps the
             # concatenated width it has always had.
             self.head = XAttnHead(dim, pooled_dim=dim * parts,
@@ -270,14 +412,40 @@ class SlotNet(nn.Module):
         elif head == "slot":
             self.head = SlotHead(dim * parts, dropout=dropout, prior=prior)
         else:
-            raise ValueError(f"unknown head {head!r}; use 'slot' or 'xattn'")
+            raise ValueError(
+                f"unknown head {head!r}; use 'slot', 'xattn' or 'gattn'"
+            )
         self.register_buffer("mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
 
     def forward(self, imgs: torch.Tensor, mask: torch.Tensor,
                 img_size: int | None = None) -> torch.Tensor:
         b, s = imgs.shape[:2]
-        x = imgs.reshape(b * s, *imgs.shape[2:]).float().div_(255.0)
+
+        # The group axis is the model's business, not the training loop's.
+        #
+        # For `slot` and `xattn` the caller hands over one triplet per slot and
+        # averages logits across groups outside. `gattn` exists precisely to
+        # stop that averaging, so it takes every group at once: C = 3*G is split
+        # here and folded into the batch, which means the encoder does the same
+        # S*G passes either way and only the head sees a difference.
+        groups = 1
+        if self.head_type == "gattn":
+            channels = imgs.shape[2]
+            if channels % 3:
+                raise ValueError(
+                    f"gattn takes 3*G channels per slot, got {channels}"
+                )
+            groups = channels // 3
+            imgs = imgs.reshape(b, s * groups, 3, *imgs.shape[3:])
+        elif imgs.shape[2] != 3:
+            raise ValueError(
+                f"head {self.head_type!r} takes one 2.5D triplet per slot "
+                f"(3 channels), got {imgs.shape[2]}. Sample a group first, or "
+                f"use head='gattn' to hand the model all of them."
+            )
+
+        x = imgs.reshape(b * imgs.shape[1], *imgs.shape[2:]).float().div_(255.0)
         if img_size is not None and img_size != x.shape[-1]:
             x = F.interpolate(x, size=(img_size, img_size), mode="bilinear",
                               align_corners=False)
@@ -299,13 +467,25 @@ class SlotNet(nn.Module):
             # channel's responses, which is where a small bright lesion lives.
             k = max(1, patch.shape[1] // 8)
             parts.append(patch.topk(k, dim=1).values.mean(1))
-        feat = torch.cat(parts, dim=1).reshape(b, s, -1)
+        feat = torch.cat(parts, dim=1)
+        n_token, width = out.shape[1], out.shape[2]
 
+        if self.head_type == "gattn":
+            tokens = out.reshape(b, s, groups, n_token, width)
+            # The pooled path stays per-SLOT, so its groups are averaged here.
+            # That is deliberate: averaging is the thing the token path exists
+            # to avoid, and leaving the pooled baseline exactly as it was in the
+            # working model keeps the comparison to XAttnHead honest. Only the
+            # spatial path gets the new axis.
+            pooled = feat.reshape(b, s, groups, -1).mean(2)
+            return self.head(tokens, pooled, mask)
+
+        feat = feat.reshape(b, s, -1)
         if self.head_type == "xattn":
             # Hand the head the token grid as well. This is the whole point:
             # `feat` has already thrown away where in the image anything was,
             # and that is what the four null experiments were fighting.
-            tokens = out.reshape(b, s, out.shape[1], out.shape[2])
+            tokens = out.reshape(b, s, n_token, width)
             return self.head(tokens, feat, mask)
         return self.head(feat, mask)
 
