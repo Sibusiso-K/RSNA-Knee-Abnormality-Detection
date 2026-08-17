@@ -382,6 +382,37 @@ converts "does our notebook even produce a scoreable file" from an unknown into 
    fat-suppression rebuild.
 4. **Stop scaling slices** — 12 slices/slot scored 0.8161 vs 6 slices' 0.8207, both under `xattn`.
 
+### PSEUDO-LABELS PAY: fold 0 0.8257 vs 0.8207 (+0.0050) — 2026-08-17
+
+**The first non-null lever since the pipeline rebuild**, and it is the one aimed at the label
+ceiling rather than at the model.
+
+`labels_pseudo_a70.csv` = `0.7 x labels_blend_v1 + 0.3 x OOF`, where the OOF predictions are the
+complete 5-fold out-of-fold output of `knee-train-base-6slice` (4,349 studies, 5 non-overlapping
+folds, no study predicted by a model that trained on it). Single global alpha, **no per-label
+weighting** — choosing which labels to trust from 58 gold studies is the overfitting this project
+already refuses for per-label selection.
+
++0.0050 is 2.5x the 0.0020 noise floor, against a 336x6 small/xattn baseline of 0.8207.
+
+**The comparison is only valid because the yardstick was pinned.** `valid_y` originally came from
+the same label file as training, so a naive run would have validated pseudo-label training against
+pseudo-labels — CV would have risen because the model was scored against targets it had been fitted
+to, and the number would have looked like a win while meaning nothing.
+`knee-train-pseudo-f0` trains on `labels_pseudo_a70` and validates on `labels_blend_v1`, logging
+both paths so the split is visible in the run.
+
+**What is NOT yet established:**
+
+- **n = 1 fold, 1 seed.** +0.0050 clears the noise floor but one fold is one fold.
+- **Alpha is untuned.** 0.7 was chosen as a conservative default, not measured. Whether the effect
+  grows or reverses at 0.5 is unknown, and a monotonic response across alpha would be much stronger
+  evidence than a single point.
+- **Iterating is not obviously safe.** Round two would blend in OOF from a model already trained on
+  pseudo-labels, which risks self-confirmation: the model agrees with targets it helped write. If it
+  is iterated, the gold-58 report and the fixed yardstick both have to stay in place.
+- Gold-58 was unchanged (0.8930 → 0.8930), as expected — n=58 cannot resolve ~0.005.
+
 ### The pattern across every measured lever
 
 | Lever | Category | Result |
@@ -391,6 +422,8 @@ converts "does our notebook even produce a scoreable file" from an unknown into 
 | Resolution 336 → 448 (pooled head) | how finely it sees | −0.0014 |
 | Resolution 336 → 448 (**xattn**) | how finely it sees | **+0.0011** |
 | Encoder small → base (pooled head) | how much model | −0.0005 |
+| Fat-suppression routing (255 studies, 5.79%) | what it sees | ~null across folds |
+| **Pseudo-labels, α=0.7** | **label quality** | **+0.0050** |
 
 **Changing *which* acquisition and *which* anatomical position reaches the model pays. Changing how
 much or how finely it is rendered does not.** Four independent measurements now agree. This is the
