@@ -4,7 +4,54 @@
 > Every other doc explains something stable; this one changes constantly.
 > **Update it at the end of every working session.** If it's stale, everything else is a trap.
 
-**Last updated:** 2026-08-11, 21:30 UTC (session 15 — measured the field, rebuilt the input)
+**Last updated:** 2026-08-17, 12:40 UTC (session 17 — the public weights are not better than ours)
+
+> ## Session 17: the borrowed-weights shortcut does not exist
+>
+> The plan was to clear 0.9 by blending publicly released checkpoints, on the
+> strength of the ~0.899 reputation attached to them. **Both public sets were run
+> through our pipeline and scored, and the reputation did not survive contact:**
+>
+> | Submission | Members | LB |
+> |---|---|---|
+> | `55573162` public-20 (`pilkwang/rsna-knee-weights`) | 20 | **0.839** |
+> | `55574007` public-25 (+5 `champ`) | 25 | **0.844** |
+> | `55503594` **ours** | 5 | **0.864** |
+>
+> Their self-reported holdout was 0.8381 and it transferred to the board almost
+> 1:1. Ours goes CV 0.8185 → LB 0.864, roughly +0.045. **Our model is the
+> stronger one and the local work is what to keep pushing.**
+>
+> Two defects found on the way, both in reading other people's configuration
+> rather than in the model:
+>
+> - **The `champ` members were scored on anatomy they were never trained on.**
+>   They declare 224 px, 9 slices, band 0.35–0.65; we fed them 336 px, 12 slices,
+>   band 0.2–0.8. Nothing raised — DINOv2 interpolates its position embeddings —
+>   so five of twenty-five members in a scored submission were reading the wrong
+>   scale. `src/model/members.py` now gates on the full fingerprint, not just
+>   whether the weights load.
+> - **A band recorded as a string killed a 35-member GPU run ten minutes in.**
+>   One publisher writes `[0.2, 0.8]`, another `"0.35,0.65"`; a string is
+>   iterable, so the parser walked characters and died on `float('.')`. That
+>   logic now lives in a module with tests that `build.sh` runs before every
+>   push, because every checkpoint we might blend is on disk and it had no
+>   business being discovered on an accelerator.
+>
+> **Mixed-grid ensembling is now possible.** The 6- and 12-slice grids are both
+> `linspace` over the band and share only their endpoints, so neither nests in
+> the other and a 6-slice model cannot be fed slices carved from a 12-slice
+> cache. `build_study_multi` reads each study's headers once, decodes the *union*
+> of both grids, and builds each independently — and proves itself byte-identical
+> to `build_study` on three real studies before any member is scored.
+>
+> **Also: submission never needed a browser.** `kaggle competitions submit -k
+> <kernel> -v <version> -f submission.csv` handles code competitions. Eleven
+> sessions of manual Chrome dances for no reason.
+>
+> `55578383` (mix35: 15 ours + 20 public, weighted 60/40 to ours) and `55574915`
+> (10 members, breadth only) are both pending. The second is the more informative
+> one — it changes one variable.
 
 > ## Session 15: we are 713th of 1,185, and below a notebook anyone can fork
 >
@@ -358,8 +405,16 @@
 | 0 — Access | ✅ Done |
 | 1 — Labels from reports | ✅ **Ensemble (rule + LLM) 0.8234** vs gold, up from 0.757 rule-only |
 | 2 — Site-grouped CV | ✅ Done and **verified honest** (151 groups / 4,349 studies) |
-| 3 — Imaging model | ✅ **Fold 0 trained: 0.7746 grouped-CV macro AUC** |
-| 4 — Submission | ✅ **Submitted 2026-08-10: public LB 0.783** (CV 0.7746 — CV transfers) |
+| 3 — Imaging model | ✅ **15 members across 3 families**, best family CV 0.8185 (6 slices/slot, xattn head) |
+| 4 — Submission | ✅ **Best LB 0.864** (`55503594`). History: 0.783 → 0.850 → 0.856 → **0.864** |
+| 5 — Ensemble breadth | 🔄 `55574915` (10 members) and `55578383` (mix35) pending |
+
+**Only one lever has ever paid.** Slice coverage: 3 → 6 slices/slot gave **+0.0236 across
+all five folds**, concentrated on the *focal* findings exactly as the spacing hypothesis
+predicted (Fracture +0.068, PF OA +0.049, Medial Meniscus +0.049) while diffuse ones
+barely moved (Effusion +0.007). Epochs (×3 attempts), DINOv2-base (−0.0005), 448 px
+(−0.0014) and 12 slices (−0.005, saturated) all returned noise. **Capacity and pixel
+density are not the constraint — do not re-test them.**
 
 **Trained model exists and works.** `knee-model-v1` (fold 0, EfficientNetV2-S 2.5D +
 attention-MIL) scores **0.7746** under honest site-grouped CV — well clear of the 0.598

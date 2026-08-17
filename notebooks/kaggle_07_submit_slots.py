@@ -239,7 +239,10 @@ try:
             # it: proj.0 takes dim*parts, so 2x encoder width is cls_mean and
             # 3x is cls_mean_focal. Guessing wrong is a shape error rather than
             # a silent one, but inferring is better than guessing.
-            w = sd["head.proj.0.weight"].shape[1]
+            # proj.0 is the LayerNorm (1-D weight); proj.1 is the Linear that
+            # actually takes dim*parts. Reading the wrong one is an IndexError,
+            # which is how this was found.
+            w = sd["head.proj.1.weight"].shape[1]
             enc = next(v for k, v in sd.items()
                        if k.endswith("embeddings.cls_token")).shape[-1]
             pool = {2: "cls_mean", 3: "cls_mean_focal"}.get(w // enc, "cls_mean")

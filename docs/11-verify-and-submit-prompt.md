@@ -8,8 +8,18 @@ You are picking up an RSNA Kaggle competition mid-flight. Repo:
 `C:\Users\lovilocal.adm\Desktop\RSNA-Knee-Abnormality-Detection`, branch
 `handover-continuation`. Kaggle account `sibusisokhumalo11`, already
 authenticated — use `python -m kaggle` (the bare `kaggle` binary is not on PATH).
-Use **Claude in Chrome** for anything Kaggle's API can't reach: kernel logs don't
-stream for script kernels and competition submission is a browser-only action.
+**Submission does NOT need a browser.** The CLI handles code competitions:
+
+```
+python -m kaggle competitions submit rsna-knee-abnormality-detection \
+  -k sibusisokhumalo11/<kernel> -v <version> -f submission.csv -m "<description>"
+```
+
+That was assumed to be browser-only for eleven sessions and never was, which
+cost a long detour when the Chrome extension dropped mid-run. Use **Claude in
+Chrome** only for what the API genuinely cannot reach: script-kernel logs do not
+stream, and `kernels output` sometimes returns the log file **empty** even after
+a clean run — see "verifying without a log" below.
 
 **Your job:** some training runs were done on a different account. Verify them
 properly, and if they're better than what we have, submit. Do not submit
@@ -88,8 +98,28 @@ Also: `kaggle datasets version` is **asynchronous**. After `--push-src`, wait fo
 4. **Before submitting, check the log for:** `combined N member(s)`, `decode
    failures 0`, and the absence of `still the 0.5 default`. That tripwire has
    already caught one all-0.5 submission that would have scored ~0.5.
-5. Submit via Chrome (Output tab → Submit to Competition) with a description
-   recording config and CV. Confirm it registers, then report the score.
+5. Submit with the CLI command at the top of this file. Confirm it registers
+   (`competitions submissions`), then report the score.
+
+### Verifying without a log
+
+`kernels output` returns a zero-byte log often enough that you need a fallback,
+and "the log was empty so I submitted anyway" is not one. The submission file
+itself carries most of the answer:
+
+- **Every row still 0.5** -> the script hit `write_and_exit`. Nothing was scored.
+  Any real run varies.
+- **Member count and weights** are recoverable exactly. Percentile ranks over
+  `n` scored studies take values `k/n`, so a weighted rank-mean lands on exact
+  multiples of `1/(n * W)` where `W` is the total blend weight. Scan `W` upwards
+  until every value in the file is a multiple, and compare against what you
+  intended: `W = 50` confirmed 15 members at weight 2 plus 20 at weight 1,
+  without a single line of log.
+- **Decode failures** show as rows still sitting at exactly 0.5 while others vary.
+
+Note the public run scores only ~3 studies; the ~1,300 come at the private
+re-run. So a fast, tiny `submission.csv` is normal and is not evidence of a
+problem.
 
 **Critical:** if the new models were trained at a different slices-per-slot than
 the test cache the submission builds, the tensors will be the right shape and

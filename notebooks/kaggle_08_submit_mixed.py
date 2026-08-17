@@ -73,23 +73,30 @@ SLICES_BY_DIR = {
 }
 
 #: Relative weight per grid in the rank mean. A plain average is only right
-#: when the members are interchangeable, and these are not: the twelve-slice
-#: group holds out at 0.8381 and its LB baseline is ~0.899, while ours sit at
-#: CV 0.8185 for an LB of 0.864. Counting them equally would give the weaker
-#: fifteen almost half the blend (15 vs 20) and pull the result back towards
-#: the number we already have.
+#: when the members are interchangeable, and these are not.
 #:
-#: 2:1 puts the stronger group at ~73% — enough that it still decides, while
-#: the weaker one keeps a real share, which is the whole point of adding it.
-#: They were trained on different labels and different seeds, so where they
-#: disagree the disagreement carries information a bigger copy of either group
-#: would not.
+#: This constant was first set 12:1 over 6, on the published reputation of the
+#: twelve-slice members — a holdout of 0.8381 and a widely-quoted ~0.899 on the
+#: board. Both groups have now been run through this pipeline and scored on the
+#: SAME ruler, and the reputation did not survive it:
 #:
-#: This is a judgement, not a measurement. There is no clean way to validate
-#: it: the public members were trained on the same studies we hold out, so any
-#: score computed on our training data is contaminated for them. Recorded here
-#: as an assumption rather than buried as a constant.
-GRID_WEIGHT = {12: 2.0, 6: 1.0}
+#:     20 public twelve-slice members, rank-mean   ->  LB 0.839
+#:     25 (those plus 5 mismatched champ members)  ->  LB 0.844
+#:      5 of ours, six-slice                       ->  LB 0.864
+#:
+#: So the weaker group is theirs, not ours, and the original weighting would
+#: have handed 73% of the blend to the members that measure lower. Inverted.
+#:
+#: 2:1 towards ours puts our fifteen at ~60%: they decide, while twenty
+#: genuinely independent members — different labels, different seeds, different
+#: schedules — keep a real share. That share is not charity. Adding five
+#: members that were fed the WRONG anatomy still moved 0.839 to 0.844, which
+#: says the blend is paying for disagreement rather than for accuracy.
+#:
+#: The exact ratio is still a judgement. It cannot be validated offline: the
+#: public members were trained on studies we hold out, so any CV computed for
+#: them here is contaminated. Recorded as an assumption, not buried.
+GRID_WEIGHT = {6: 2.0, 12: 1.0}
 
 
 def find_dir(marker, max_depth=5):
@@ -127,6 +134,7 @@ sys.path.insert(0, PKG)
 import src.data.cache as _cache                        # noqa: E402
 from src.data.cache import build_study, build_study_multi   # noqa: E402
 from src.data.slots import GROUP, IMG, N_SLOT, SLICE_BAND   # noqa: E402
+from src.model.members import member_fingerprint, refuse_reason  # noqa: E402
 from src.labels import TARGETS                          # noqa: E402
 
 for _mod in ("pydicom", "cv2", "gdcm", "pylibjpeg", "openjpeg", "PIL"):
@@ -198,11 +206,25 @@ try:
             return None
         return candidates[0][0]
 
-    checkpoints = sorted(
-        glob.glob(f"{INPUT}/**/knee_slot_fold*.pth", recursive=True)
-        + glob.glob(f"{INPUT}/**/m_*.pt", recursive=True)
-        + glob.glob(f"{INPUT}/**/champ_fold*.pt", recursive=True)
-    )
+    # Pruned walk, not glob(recursive=True).
+    #
+    # `**` descends into everything under /kaggle/input, and that includes
+    # test_series/ — thousands of nested study directories holding the DICOMs.
+    # Finding 35 checkpoints this way measured 613 s on the three-study public
+    # run, where test_series is nearly empty; on the private re-run it holds
+    # ~1,300 studies and the same walk is the cost that took ~1,100 s per call
+    # on the training side. That comes straight off the 9 h cap for no reason:
+    # no checkpoint is ever inside it.
+    PATTERNS = ("knee_slot_fold*.pth", "m_*.pt", "champ_fold*.pt")
+    import fnmatch
+
+    checkpoints = []
+    for root, dirs, files in os.walk(INPUT):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for name in files:
+            if any(fnmatch.fnmatch(name, p) for p in PATTERNS):
+                checkpoints.append(os.path.join(root, name))
+    checkpoints = sorted(checkpoints)
     if not checkpoints:
         write_and_exit("no checkpoints found")
     log(f"checkpoints found: {len(checkpoints)}")
@@ -230,57 +252,18 @@ try:
             head = "xattn" if any(k.startswith("head.cross_attn") for k in sd) else "slot"
         return sd, pool, bool(prior), head
 
-    def fingerprint_of(path, blob):
-        """(slices, img, band) as the member declares them, or None to refuse.
-
-        Three publishers, three conventions: ours records `slices_per_slot` at
-        the top level, the twelve-slice members record `config.slices`, and the
-        champ members record a `fingerprint` dict with group x n_group and a
-        `window` string. All three are read; nothing is inferred from shapes,
-        because every one of these configurations produces the same tensor
-        shape and only the anatomy differs.
-        """
-        cfg = blob.get("config") or {}
-        fp = blob.get("fingerprint") or {}
-
-        slices = (cfg.get("slices") or blob.get("slices_per_slot")
-                  or blob.get("n_slice"))
-        if slices is None and fp.get("group") and fp.get("n_group"):
-            slices = int(fp["group"]) * int(fp["n_group"])
-        if slices is None:
-            for name, value in SLICES_BY_DIR.items():
-                if f"/{name}/" in path.replace(os.sep, "/") + "/":
-                    slices = value
-                    break
-        img = cfg.get("img") or fp.get("img") or blob.get("size")
-
-        band = cfg.get("band")
-        if band is None and fp.get("window"):
-            band = [float(x) for x in str(fp["window"]).split(",")]
-        return (None if slices is None else int(slices),
-                None if img is None else int(img),
-                None if band is None else tuple(round(float(b), 3) for b in band))
-
     WANT_BAND = tuple(round(float(b), 3) for b in SLICE_BAND)
 
     models, skipped = [], []
     for path in checkpoints:
         blob = torch.load(path, map_location="cpu", weights_only=False)
         name = os.path.basename(path)
-        slices, img, band = fingerprint_of(path, blob)
+        slices, img, band = member_fingerprint(path, blob, SLICES_BY_DIR)
 
         # Refuse rather than guess. Feeding a member the wrong grid, size or
         # band costs a fraction of the ensemble and shows up as noise, not as
         # an error - so the gate has to be here, before the pixels are built.
-        why = None
-        if slices is None:
-            why = "declares no slices/slot and no directory default"
-        elif slices % GROUP:
-            why = f"{slices} slices/slot is not a multiple of {GROUP}"
-        elif img is not None and int(img) != IMG:
-            why = f"trained at {img}px, cache is {IMG}px"
-        elif band is not None and band != WANT_BAND:
-            why = f"trained on band {band}, cache uses {WANT_BAND}"
+        why = refuse_reason(slices, img, band, IMG, WANT_BAND, GROUP)
         if why:
             skipped.append((name, why))
             continue

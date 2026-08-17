@@ -17,4 +17,10 @@ grep -q 'for g in range(n_groups)'   "$2/script.py" || { echo "inference must av
 grep -q 'rank(pct=True)'             "$2/script.py" || { echo "members must combine by rank" >&2; exit 1; }
 grep -q 'still the 0.5 default'      "$2/script.py" || { echo "constant-submission tripwire missing" >&2; exit 1; }
 grep -q 'head.cross_attn'            "$2/script.py" || { echo "head must be inferred from the weights" >&2; exit 1; }
-grep -q 'trained at {img}px'         "$2/script.py" || { echo "fingerprint gate missing - champ members would be fed 336px" >&2; exit 1; }
+grep -q 'refuse_reason'              "$2/script.py" || { echo "fingerprint gate missing - champ members would be fed 336px" >&2; exit 1; }
+grep -q 'os.walk(INPUT)'             "$2/script.py" || { echo "checkpoint search must prune test_series, not glob ** through it" >&2; exit 1; }
+
+# The gate itself is tested against every checkpoint on disk, because the last
+# two failures were both in reading other people's config rather than in the
+# model: a band recorded as a string took down a run 10 minutes in.
+python -m pytest -q "$1/tests/test_members.py" >/dev/null || { echo "member fingerprint tests fail" >&2; exit 1; }
