@@ -194,6 +194,7 @@ try:
     checkpoints = sorted(
         glob.glob(f"{INPUT}/**/knee_slot_fold*.pth", recursive=True)
         + glob.glob(f"{INPUT}/**/m_*.pt", recursive=True)
+        + glob.glob(f"{INPUT}/**/champ_fold*.pt", recursive=True)
     )
     if not checkpoints:
         write_and_exit("no checkpoints found")
@@ -222,13 +223,28 @@ try:
         unexpected one, means the architectures genuinely differ and the run
         must stop rather than load a partly-initialised model and score it.
         """
+        import re as _re
+
         sd = blob["model"] if "model" in blob else blob
-        if any(k.startswith("backbone.") for k in sd):
-            sd = {(k.replace("backbone.", "vit.", 1) if k.startswith("backbone.")
-                   else k): v for k, v in sd.items()}
+        # Different publishers name the encoder differently: ours `vit`,
+        # pilkwang `backbone`, stevenleehans `encoder.module` (a DataParallel
+        # wrapper that survived the save). The head parameters are identical in
+        # all three, so a prefix rewrite is the whole of the mapping.
+        sd = {_re.sub(r"^(backbone\.|encoder\.module\.|encoder\.)", "vit.", k): v
+              for k, v in sd.items()}
         cfg = blob.get("config") or {}
-        pool = cfg.get("pool") or blob.get("pool") or "cls_mean_focal"
-        prior = cfg.get("prior", blob.get("prior", True))
+        pool = cfg.get("pool") or blob.get("pool")
+        if pool is None:
+            # No recorded config (champ members). The head's input width says
+            # it: proj.0 takes dim*parts, so 2x encoder width is cls_mean and
+            # 3x is cls_mean_focal. Guessing wrong is a shape error rather than
+            # a silent one, but inferring is better than guessing.
+            w = sd["head.proj.0.weight"].shape[1]
+            enc = next(v for k, v in sd.items()
+                       if k.endswith("embeddings.cls_token")).shape[-1]
+            pool = {2: "cls_mean", 3: "cls_mean_focal"}.get(w // enc, "cls_mean")
+        prior = cfg.get("prior", blob.get("prior",
+                                          any("slot_prior" in k for k in sd)))
         head = blob.get("head")
         if head is None:
             head = "xattn" if any(k.startswith("head.cross_attn") for k in sd) else "slot"
