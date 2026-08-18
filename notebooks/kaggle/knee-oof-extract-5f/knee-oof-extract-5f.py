@@ -110,22 +110,20 @@ N_FOLDS = 5
 TRAIN_SIZE = int(os.environ.get("SIZE", str(IMG)))
 UNDECIDED = 0.05
 
-# --- device: CUDA, XLA/TPU, or CPU ------------------------------------------
+# --- device: CUDA or CPU only, deliberately never XLA -----------------------
+# This is a GPU-only inference notebook (T4). Earlier versions of this script
+# auto-detected torch_xla the same way the trainer does, which broke here: the
+# T4 docker image still bundles torch_xla, so `import torch_xla` succeeds even
+# without TPU hardware, falls back to PJRT_DEVICE=CPU, and hands back an XLA
+# CPU device. torch.load(..., map_location=<that xla device>) then fails with
+# "don't know how to restore data location of torch.storage.UntypedStorage
+# (tagged with xla:0)" - a real run, not a transient error, confirmed by the
+# fold split reproducing exactly (870/870/870/870/869, 151 fingerprints)
+# before the crash. Training already moved every tensor to CPU before saving
+# (`state = {k: v.cpu() for k, v in state.items()}`), so there is nothing here
+# that needs XLA-aware loading. Not detecting it at all is the fix.
 XLA = False
-xm = None
-if os.environ.get("USE_XLA", "auto") != "0":
-    try:
-        import torch_xla.core.xla_model as _xm
-
-        xm = _xm
-        device = xm.xla_device()
-        XLA = True
-    except Exception:
-        XLA = False
-
-if not XLA:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 log(f"device: {device}  torch {torch.__version__}  XLA={XLA}")
 if device.type == "cuda":
     log(f"gpu: {torch.cuda.get_device_name(0)}  "
@@ -258,8 +256,6 @@ def macro_auc(y_true, y_pred, drop_undecided=True):
 
 
 def autocast():
-    if XLA:
-        return torch.autocast("xla", dtype=torch.bfloat16)
     return torch.autocast("cuda", enabled=device.type == "cuda")
 
 
@@ -277,8 +273,6 @@ def predict(model, rows):
                 logits = model(x, m, TRAIN_SIZE).float()
             acc = logits if acc is None else acc + logits
         probs = torch.sigmoid(acc / N_GROUPS)
-        if XLA:
-            xm.mark_step()
         out.append(probs.cpu().numpy())
     return np.concatenate(out) if out else np.zeros((0, len(TARGETS)), np.float32)
 
@@ -322,13 +316,19 @@ def extract_fold(fold):
             f"knee_slot_fold{fold}.pth not found - attach knee-train-pseudo-5f"
         )
     ckpt_path = os.path.join(ckpt_dir, f"knee_slot_fold{fold}.pth")
-    blob = torch.load(ckpt_path, map_location=device, weights_only=False)
+    # map_location="cpu", not `device`: training already moved every tensor to
+    # CPU before saving, so there is no XLA- or CUDA-tagged storage in the
+    # file to restore. Loading to CPU first and moving the constructed model
+    # to `device` afterward sidesteps map_location entirely, which is the
+    # actual fix for the "don't know how to restore data location" crash.
+    blob = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     log(f"  loaded {ckpt_path}: training-log CV {blob.get('score', float('nan')):.4f} "
         f"epoch {blob.get('epoch')} labels {blob.get('labels')}")
 
     model = SlotNet(DINOV2, unfreeze_last=UNFREEZE_LAST, pool=POOL,
-                     head=blob.get("head", "xattn")).to(device)
+                     head=blob.get("head", "xattn"))
     model.load_state_dict(blob["model"])
+    model.to(device)
     model.eval()
 
     pred = predict(model, valid_rows)
