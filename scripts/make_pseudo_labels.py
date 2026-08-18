@@ -33,6 +33,31 @@ The three ways this goes wrong, and what is done about each
    (the LLM's +0.024 was already inside that band). The gold score printed here
    is a sanity check for gross damage, not evidence of improvement. **The real
    test is a fold-0 retrain against the same cache**, which is ~35 min.
+
+Round 2 and beyond
+-------------------
+Round 1 (`labels_pseudo_a5.csv`, alpha 0.5) measured +0.0111 mean CV across all 5
+folds — every fold improved, none regressed. That model's own OOF predictions
+are a new, independent input: round 2 blends `labels_pseudo_a5.csv` (not the
+original `labels_blend_v1.csv`) with fresh OOF from the round-1 checkpoints.
+
+This is where the circularity risk stops being hypothetical: round 2's OOF
+comes from a model that was itself trained on blended labels, so "the imaging
+model agrees with the labels" is now partly true by construction rather than
+purely informative. Two flags exist for exactly this:
+
+    --drift-ref  labels_blend_v1.csv   # the ORIGINAL text labels, never
+                                        # last round's output
+    --prev-oof   round1_oof_fold*.csv  # last round's OOF, to see if this
+                                        # round moved at all
+
+If `--drift-ref` shows the output moving steadily further from the original
+text with each round, that is the labels walking away from their only
+external signal, not converging on truth — round CV can rise the whole time
+this happens, because CV is scored against a moving target too closely
+related to the training signal. If `--prev-oof` shows near-zero movement, the
+model has converged and another round buys nothing but that same drift risk
+for no gain.
 """
 
 from __future__ import annotations
@@ -134,6 +159,21 @@ def main() -> None:
     ap.add_argument("--report-gold", default="",
                     help="train.csv, to print before/after gold AUC. REPORTING "
                          "ONLY — nothing downstream reads this number.")
+    ap.add_argument(
+        "--drift-ref", default="",
+        help="Reference labels to measure drift against — normally the ORIGINAL "
+             "labels_blend_v1.csv. On round 2+ this is the guard that matters: "
+             "each round blends in predictions from a model trained on the "
+             "previous round's output, so the targets can walk away from the "
+             "external text signal while every internal metric still improves. "
+             "Reported, never used to change the output.",
+    )
+    ap.add_argument(
+        "--prev-oof", nargs="*", default=[],
+        help="Previous round's OOF files. Reports how far this round's "
+             "predictions moved. If they barely moved, the round adds nothing "
+             "and the extra drift buys no new information.",
+    )
     args = ap.parse_args()
 
     print("loading OOF predictions:")
@@ -154,6 +194,10 @@ def main() -> None:
     print("\nper-label effect:")
     print(summary.to_string(index=False, float_format=lambda v: f"{v:.3f}"))
 
+    if args.drift_ref:
+        report_drift(args.drift_ref, out)
+    if args.prev_oof:
+        report_oof_movement(args.prev_oof, oof)
     if args.report_gold:
         report_gold(args.report_gold, labels, out)
 
@@ -182,6 +226,39 @@ def _macro_auc(y: np.ndarray, p: np.ndarray) -> float:
             continue
         scores.append(roc_auc_score(col[keep], p[keep, i]))
     return float(np.mean(scores)) if scores else float("nan")
+
+
+def report_drift(ref_path: str, out: pd.DataFrame) -> None:
+    """How far THIS round's output has moved from the original text labels.
+
+    Round 1 blends text with OOF from a model trained on text. Round 2 blends
+    round-1 output with OOF from a model trained on round-1 output — so the
+    external signal (the text extraction) can shrink round over round while
+    every internal metric (fold CV, even gold if it happens to move) keeps
+    looking fine. This is the number that would catch that, because it is the
+    only one measured against something that never came from a checkpoint.
+    """
+    ref = pd.read_csv(ref_path)
+    merged = out.merge(ref, on=ID, suffixes=("", "_ref"))
+    diffs = [np.abs(merged[t] - merged[f"{t}_ref"]).mean() for t in TARGETS]
+    print(f"\ndrift from {ref_path} (the ORIGINAL text labels, not last round's output):")
+    print(f"  mean |this_round - original_text| = {np.mean(diffs):.4f}")
+    print("  (compare across rounds - if this keeps climbing, the labels are "
+          "walking away from the text signal, not converging)")
+
+
+def report_oof_movement(prev_paths: list[str], oof: pd.DataFrame) -> None:
+    """How much THIS round's OOF predictions moved from last round's.
+
+    If a new round of training barely changes what the model predicts, the
+    round has converged and blending it in again buys nothing but drift risk.
+    """
+    prev = load_oof(prev_paths)
+    merged = oof.merge(prev, on=ID, suffixes=("", "_prev"))
+    diffs = [np.abs(merged[t] - merged[f"{t}_prev"]).mean() for t in TARGETS]
+    print(f"\nOOF movement vs previous round: mean |delta| = {np.mean(diffs):.4f}")
+    print("  (near zero means the model's predictions have stopped changing - "
+          "further rounds are unlikely to add anything)")
 
 
 def report_gold(train_csv: str, before: pd.DataFrame, after: pd.DataFrame) -> None:
