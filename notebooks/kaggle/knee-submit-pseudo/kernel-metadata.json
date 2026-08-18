@@ -1,0 +1,26 @@
+{
+  "id": "sibusisokhumalo11/knee-submit-pseudo",
+  "title": "knee-submit-pseudo",
+  "code_file": "knee-submit-pseudo.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [
+    "sibusisokhumalo11/knee-src"
+  ],
+  "kernel_sources": [
+    "sibusisokhumalo11/knee-train-pseudo-5f"
+  ],
+  "competition_sources": [
+    "rsna-knee-abnormality-detection"
+  ],
+  "model_sources": [
+    "metaresearch/dinov2/PyTorch/small/1"
+  ],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:dafd4ce5668bbf1ad422e4c109e0f18c9623c3a7c7f48b0235f13142755c40b9",
+  "machine_shape": "NvidiaTeslaT4"
+}
