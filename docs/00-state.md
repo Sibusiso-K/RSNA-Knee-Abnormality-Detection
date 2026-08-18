@@ -402,6 +402,26 @@ to, and the number would have looked like a win while meaning nothing.
 `knee-train-pseudo-f0` trains on `labels_pseudo_a70` and validates on `labels_blend_v1`, logging
 both paths so the split is visible in the run.
 
+#### The alpha sweep (fold 0, all against the fixed `labels_blend_v1` yardstick)
+
+| α (weight on text) | Fold 0 CV | vs baseline |
+|---|---|---|
+| 1.00 — pure text, baseline | 0.8207 | — |
+| 0.85 | 0.8195 | −0.0012 |
+| 0.70 | 0.8257 | +0.0050 |
+| 0.50 | 0.8291 | +0.0084 |
+| 0.30 | 0.8299 | +0.0092 |
+
+**This is a threshold-and-plateau, not a monotonic response** — a correction to how it was first
+described here off two points. Light blending (α=0.85) does nothing measurable, sitting a hair below
+baseline inside the noise floor. The gain appears past ~0.7 and saturates by ~0.3: the 0.5 → 0.3 step
+buys +0.0008, which is noise.
+
+**Production choice: α = 0.5.** Statistically tied with 0.3, and it keeps more weight on the
+external text signal, which is the conservative side of the trade against the model drifting toward
+its own predictions. α=0.15 was not run — the plateau already answers the question, and TPU time is
+better spent on folds that produce a submission.
+
 **What is NOT yet established:**
 
 - **n = 1 fold, 1 seed.** +0.0050 clears the noise floor but one fold is one fold.
