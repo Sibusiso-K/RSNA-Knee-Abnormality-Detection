@@ -202,7 +202,15 @@ def load_shards(paths, mmap=False):
         raise SystemExit("no cache shards found")
     if len(paths) == 1:
         return np.load(paths[0], mmap_mode="r" if mmap else None)
-    return np.concatenate([np.load(p) for p in paths])
+    # Multiple shards are NEVER concatenated. np.concatenate loads every shard
+    # and then allocates a fresh array for the result, so peak RAM is twice the
+    # cache: fine at 8.96 GB, fatal at the 29.7 GB of the 448 px x 6 slice
+    # build against the 29.9 GB a Kaggle worker has. That run died with a bare
+    # `Killed` after ten minutes - the OOM killer leaves no traceback, so it
+    # reads as a mystery rather than as memory.
+    from src.data.shards import ShardedCache
+
+    return ShardedCache(paths)
 
 
 try:
@@ -217,9 +225,19 @@ except Exception:
 # Fall back to a memory map when the cache would not comfortably fit. Random
 # gathers from a network-mounted mmap are much slower than from RAM, so this
 # is a last resort that keeps the run alive rather than a default.
-MMAP = avail_gb < 14.0
+#
+# The threshold is measured against the CACHE, not a constant. It used to be
+# `avail_gb < 14.0`, which asks whether the machine is small and never asks how
+# big the cache is: with 29.9 GB available and a 29.7 GB cache it confidently
+# chose RAM, and the run was OOM-killed ten minutes in with a bare `Killed`
+# and no traceback. Reading the shard sizes off disk costs nothing and turns
+# that into a decision about the actual numbers.
+_cache_gb = sum(os.path.getsize(p) for p in shard_paths("cache_train_*.npy")) / 1024 ** 3
+MMAP = _cache_gb > 0.55 * avail_gb
+log(f"cache on disk {_cache_gb:.1f} GB vs {avail_gb:.1f} GB available "
+    f"-> {'mmap' if MMAP else 'RAM'}")
 if MMAP:
-    log("!! low host memory — falling back to mmap; expect slower steps")
+    log("!! cache is large relative to host memory — using mmap; expect slower steps")
 
 cache = load_shards(shard_paths("cache_train_*.npy"), mmap=MMAP)
 mask = load_shards(shard_paths("mask_train_*.npy"))

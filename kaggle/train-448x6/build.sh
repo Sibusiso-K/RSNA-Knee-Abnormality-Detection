@@ -44,3 +44,5 @@ grep -q 'os.environ.get("BATCH", "4")'    "$2/script.py" || { echo "batch patch 
 grep -q 'os.environ.get("SIZE", "448")'   "$2/script.py" || { echo "SIZE patch missed - the model would downscale 448 back to 336 and measure nothing" >&2; exit 1; }
 grep -q 'take_group'                      "$2/script.py" || { echo "xattn samples one group per step" >&2; exit 1; }
 grep -q 'xm.mark_step()'                  "$2/script.py" || { echo "XLA needs mark_step" >&2; exit 1; }
+grep -q 'ShardedCache'                    "$2/script.py" || { echo "29.7 GB over two shards must not be np.concatenate'd - that is the OOM that killed v2" >&2; exit 1; }
+grep -q '0.55 \* avail_gb'                "$2/script.py" || { echo "the mmap decision must compare against the cache size, not a constant" >&2; exit 1; }
