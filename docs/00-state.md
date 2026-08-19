@@ -999,3 +999,23 @@ Newest first. One short entry per session: what changed, what was learned.
 At the end of a session, edit three things: *Where we are right now*, *The next three actions*, and
 add a **Session log** entry at the top of that list. Add to the decision log only when a real choice
 was made. Change *Last updated*. Commit and push — that's what makes it available from anywhere.
+
+### Pseudo-labels round 1 REGRESSED on LB — 2026-08-19
+
+slot-v5 (5-fold, alpha=0.5 pseudo-labels): CV 0.8296 (+0.0111 over slot-v3's 0.8185) but
+**LB 0.857, down from slot-v3's 0.864.** The CV gain did not transfer — it likely reflects the model
+agreeing with its own family's blind spots (pseudo-labels came from knee-train-base-6slice's OOF,
+same architecture/pipeline as what CV validates against) rather than genuine label-quality
+improvement. **Round 2 (blending in yet more of the model's own predictions) is not being pursued** —
+it would very likely compound this failure mode rather than fix it.
+
+Also 2026-08-19: `ours16` (16-member: 5 small seed1 + 5 base + 5 small seed2 + 1 gattn head) scored
+LB 0.864, tying slot-v3. Built in a parallel session — includes a `gattn` (group-attention) head
+variant not present in this repo's `src/model/slotnet.py`. Worth reconciling before further work:
+check `knee-train-gattn` on Kaggle and pull its source if it's a real architectural addition.
+
+**Lesson for any future label-quality attempt:** validate the CV gain is not circular BEFORE
+trusting it — e.g. check whether the OOF source model and the model being validated share
+correlated errors (same slots, same cache, same architecture family), not just that the yardstick
+label file is fixed. A fixed yardstick guards against training/validation using the same file; it
+does not guard against the validation target being *derived from* a sibling model.
