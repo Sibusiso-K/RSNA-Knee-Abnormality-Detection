@@ -1019,3 +1019,23 @@ trusting it — e.g. check whether the OOF source model and the model being vali
 correlated errors (same slots, same cache, same architecture family), not just that the yardstick
 label file is fixed. A fixed yardstick guards against training/validation using the same file; it
 does not guard against the validation target being *derived from* a sibling model.
+
+### Diagnosis: why pseudo-labels regressed — 2026-08-19
+
+Round-1 model's own per-label OOF AUC (against the yardstick): MCL 0.754 (weakest), Lateral
+Meniscus 0.776, PF OA 0.793, Lateral OA 0.806 — vs 0.84-0.87 for the rest. These are exactly the
+labels already flagged as least trustworthy: MCL is where rule vs LLM text extraction disagree by
+-0.204 (the most contested label in the whole extraction pipeline), and menisci/OA are the
+historically weak imaging labels.
+
+**Mechanism:** blending 50% of the base model's own OOF into the training target means that on
+labels where imaging has never been reliable, the model trains against a target that is half its
+own family's noisy guess on precisely its hardest labels. Fixed-yardstick CV doesn't catch this
+because the yardstick itself (labels_blend_v1) is also weakest on these same labels — the
+architecture family's blind spot is shared with what validates it. The hidden LB, scored against
+real ground truth, is not fooled.
+
+**Implication for any future attempt:** do not blend uniformly across all 12 labels. Restrict
+pseudo-label blending to labels with demonstrated agreement between text and imaging (e.g.
+Synovitis, where imaging beat text by a wide margin) and leave contested labels (MCL, menisci, OA)
+on text-only labels.
