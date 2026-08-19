@@ -156,6 +156,19 @@ def main() -> None:
              "picking them by gold is fitting the only ground truth there is.",
     )
     ap.add_argument("--trust-delta", type=float, default=0.2)
+    ap.add_argument(
+        "--text-only", nargs="*", default=[],
+        help="labels forced to alpha=1.0 (untouched text) regardless of the "
+             "global --alpha — the selective-blend counterpart to "
+             "--trust-imaging. Use for labels where imaging and text "
+             "DISAGREE (measured by imaging-OOF-vs-text AUC on the full "
+             "training pool, never gold): round 1 (uniform alpha=0.5) "
+             "regressed on LB despite +0.0111 CV, traced to exactly the "
+             "labels where imaging has never been reliable (MCL, menisci, "
+             "OA) — blending there taught the model its own family's noise "
+             "on its hardest labels. If a label is in both --trust-imaging "
+             "and --text-only, --text-only wins.",
+    )
     ap.add_argument("--report-gold", default="",
                     help="train.csv, to print before/after gold AUC. REPORTING "
                          "ONLY — nothing downstream reads this number.")
@@ -189,6 +202,14 @@ def main() -> None:
     if per_label:
         print(f"reduced alpha for: {sorted(per_label)} "
               f"({args.alpha} -> {args.alpha - args.trust_delta})")
+
+    unknown = set(args.text_only) - set(TARGETS)
+    if unknown:
+        raise SystemExit(f"unknown target(s) in --text-only: {unknown}")
+    for t in args.text_only:
+        per_label[t] = 1.0
+    if args.text_only:
+        print(f"forced alpha=1.0 (text-only, no blend) for: {sorted(args.text_only)}")
 
     out, summary = blend(labels, oof, args.alpha, per_label)
     print("\nper-label effect:")
