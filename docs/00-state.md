@@ -4,7 +4,68 @@
 > Every other doc explains something stable; this one changes constantly.
 > **Update it at the end of every working session.** If it's stale, everything else is a trap.
 
-**Last updated:** 2026-08-17, 12:40 UTC (session 17 — the public weights are not better than ours)
+**Last updated:** 2026-08-19, 18:30 UTC (session 18 — seven levers, one gain)
+
+> ## Session 18: the levers are exhausted, and that is the finding
+>
+> The board has not moved since 2026-08-14. **0.864**, through 5 members, 16
+> members and 35 members. Everything tried since is null:
+>
+> | Lever | fold 0 | vs 0.8207 | Verdict |
+> |---|---|---|---|
+> | `gattn` — slice axis inside the model | 0.8171 | −0.0036 | nothing |
+> | 448 px **with the spatial head** | 0.8240 | +0.0033 | nothing |
+> | labels_v1 (probe, deliberately worse) | 0.7872 | −0.0335 | **real, and informative** |
+>
+> and on the board: 5 members 0.864, 16 members **0.864**, 35 members 0.861.
+>
+> ### The label probe is the one result worth keeping
+>
+> There is no better label set to test — v2 scores 0.8935 against gold and v1
+> scores 0.8930, which is 0.0005 on 58 studies. So the slope was measured
+> *downward* instead, with labels 0.137 worse:
+>
+>     labels 0.8930 -> CV 0.8207        labels 0.7565 -> CV 0.7872
+>     slope = 0.0335 / 0.137 = 0.245
+>
+> The effect is three times the noise band, so the model demonstrably tracks
+> its targets — but it recovers only a quarter of any label change. **Perfect**
+> labels would be worth ≈ +0.026 CV. A *realistic* improvement to ~0.93 buys
+> ≈ +0.009, under the ±0.011 bar and therefore unmeasurable. Clearing +0.02
+> needs labels at 0.975 against gold, from 58 gold studies and multilingual
+> reports.
+>
+> **So labels are a real constraint with poor leverage.** Rebuilding that
+> pipeline would have cost days for a gain we could not detect. Forty minutes
+> to close the direction was the best trade of the session.
+>
+> ### 448 px deserves its own note, because the retest was justified
+>
+> The 2026-08-12 null (−0.0014) was measured with the SLOT head, which
+> mean-pools every patch token into one vector per slot — 336→448 raises tokens
+> 577→1025 and all the extra ones were averaged into the same vector. Removing
+> that confound **did** flip the sign, −0.0014 → +0.0033. The reasoning was
+> right and the effect is still a third of what it needs to be. Resolution is
+> not the constraint under either head. Do not test it a third time.
+>
+> ### Where that leaves the model
+>
+> Seven levers, all null: epochs (×3), encoder size, pixel density (×2, both
+> heads), slices past six, the aggregation head, ensemble breadth, label
+> quality. **One lever has ever paid: slice coverage 3→6, +0.0236.**
+>
+> A score insensitive to capacity, resolution, aggregation, ensemble size AND
+> targets is not limited by any of them. The next move is not another
+> hypothesis generated from our own results — that well is dry, and two days of
+> them returned noise. It is to read what the **0.93+** solutions do
+> differently. That is reading, not compute.
+>
+> Infrastructure landed this session and is worth keeping regardless:
+> mixed-grid caching (`build_study_multi`), the member fingerprint gate
+> (`src/model/members.py`), and memmap-backed sharded reads
+> (`src/data/shards.py`) — a 29.7 GB cache no longer needs 59 GB of RAM.
+
+> ## Session 17: the borrowed-weights shortcut does not exist
 
 > ## Session 17: the borrowed-weights shortcut does not exist
 >
@@ -407,7 +468,7 @@
 | 2 — Site-grouped CV | ✅ Done and **verified honest** (151 groups / 4,349 studies) |
 | 3 — Imaging model | ✅ **15 members across 3 families**, best family CV 0.8185 (6 slices/slot, xattn head) |
 | 4 — Submission | ✅ **Best LB 0.864** (`55503594`). History: 0.783 → 0.850 → 0.856 → **0.864** |
-| 5 — Ensemble breadth | 🔄 `55574915` (10 members) and `55578383` (mix35) pending |
+| 5 — Ensemble breadth | ❌ **Exhausted.** 5 members 0.864, 16 members 0.864, 35 members 0.861 |
 
 **Only one lever has ever paid.** Slice coverage: 3 → 6 slices/slot gave **+0.0236 across
 all five folds**, concentrated on the *focal* findings exactly as the spacing hypothesis
