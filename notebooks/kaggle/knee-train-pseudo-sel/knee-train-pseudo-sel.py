@@ -127,17 +127,13 @@ UNDECIDED = 0.05
 # risky ops lower (grid_sample, topk), and one core sustains 63.6 study/s
 # warm after a ~10 s compile. The 20 h/week TPU quota is also on a completely
 # separate budget from the GPU's 30 h.
+# Forced CUDA/CPU, never XLA. This is a GPU-only run (T4): the T4 docker
+# image still bundles torch_xla, so `import torch_xla` succeeds even without
+# TPU hardware and hands back a fake CPU-XLA device (PJRT_DEVICE defaults to
+# CPU) instead of raising - silently training on wrapped CPU rather than the
+# actual GPU. Same bug, same fix as knee-oof-extract-5f.
 XLA = False
 xm = None
-if os.environ.get("USE_XLA", "auto") != "0":
-    try:
-        import torch_xla.core.xla_model as _xm
-
-        xm = _xm
-        device = xm.xla_device()
-        XLA = True
-    except Exception:
-        XLA = False
 
 if not XLA:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
