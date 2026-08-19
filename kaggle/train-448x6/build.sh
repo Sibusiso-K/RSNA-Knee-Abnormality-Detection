@@ -29,6 +29,10 @@
 #
 # BATCH 8 -> 4: 1025 tokens per image against 577 is 1.78x the activation, and
 # a v5e-8 core already OOMed once on this model at 16.36G of 15.75G.
+#
+# GPU, not TPU: the 20 h/week TPU quota is spent. A T4 is slower per step than
+# a v5e-8 core, but the 30 h GPU budget is a separate one and largely unused
+# this week, and the 9 h kernel cap is not close for a single fold.
 set -euo pipefail
 sed -e 's|os.environ.get("HEAD", "slot")|os.environ.get("HEAD", "xattn")|' \
     -e 's|os.environ.get("BATCH", "8")|os.environ.get("BATCH", "4")|' \
