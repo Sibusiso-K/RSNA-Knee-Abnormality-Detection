@@ -286,18 +286,19 @@ try:
                 f"unexpected {sorted(result.unexpected_keys)[:4]}"
             )
         net.eval().to(device)
-        models.append((net, int(slices), name))
+        models.append((net, int(slices), head, name))
 
     for name, why in skipped:
         log(f"  SKIPPED {name}: {why}")
     if not models:
         write_and_exit("every checkpoint was refused by the fingerprint gate")
 
-    TAKES = tuple(sorted({s for _net, s, _n in models}))
+    TAKES = tuple(sorted({s for _net, s, _h, _n in models}))
 
 
     log(f"members: {len(models)} kept, {len(skipped)} skipped | "
-        f"grids {dict(Counter(s for _n, s, _m in models))}")
+        f"grids {dict(Counter(s for _n, s, _h, _m in models))} "
+        f"heads {dict(Counter(h for _n, _s, h, _m in models))}")
     log(f"test cache grids: {TAKES} slices/slot, groups of {GROUP}")
 
     plane_of = dict(zip(test_series["SeriesInstanceUID"],
@@ -389,19 +390,28 @@ try:
         autocast = (torch.autocast("xla", dtype=torch.bfloat16) if XLA
                     else torch.autocast("cuda", enabled=device.type == "cuda"))
         with torch.no_grad(), autocast:
-            for member, (net, slices, _name) in enumerate(models):
-                # Each member reads ITS OWN grid and averages logits over the
-                # groups of three within it, exactly as training sampled one
-                # group per step. This is the line the whole notebook exists
-                # for: `xk` is chosen by the member, not by the cache.
+            for member, (net, slices, head, _name) in enumerate(models):
+                # Each member reads ITS OWN grid. This is the line the whole
+                # notebook exists for: `xk` is chosen by the member, not by
+                # the cache.
                 xk = x[slices]
-                n_groups = slices // GROUP
-                acc = None
-                for g in range(n_groups):
-                    xg = xk[:, :, g * GROUP:(g + 1) * GROUP]
-                    lg = net(xg, m).float()
-                    acc = lg if acc is None else acc + lg
-                probs = torch.sigmoid(acc / n_groups)
+                if head == "gattn":
+                    # gattn consumes the whole slice axis in one pass - that is
+                    # the entire point of it, and slicing out a triplet here
+                    # would hand a model trained on G groups a single group.
+                    # It would run, and score a different model than the one
+                    # that was trained.
+                    probs = torch.sigmoid(net(xk, m).float())
+                else:
+                    # Everything else takes one triplet and averages logits
+                    # over groups, exactly as training sampled one per step.
+                    n_groups = slices // GROUP
+                    acc = None
+                    for g in range(n_groups):
+                        xg = xk[:, :, g * GROUP:(g + 1) * GROUP]
+                        lg = net(xg, m).float()
+                        acc = lg if acc is None else acc + lg
+                    probs = torch.sigmoid(acc / n_groups)
                 if XLA:
                     xm.mark_step()
                 member_preds[member][rows] = probs.cpu().numpy()
@@ -420,7 +430,7 @@ try:
     if scored.any():
         ranked = np.zeros((int(scored.sum()), len(TARGETS)), dtype=np.float32)
         total_w = 0.0
-        for member, (_net, slices, _name) in zip(member_preds, models):
+        for member, (_net, slices, _head, _name) in zip(member_preds, models):
             w = float(GRID_WEIGHT.get(slices, 1.0))
             frame = pd.DataFrame(member[scored], columns=list(TARGETS))
             ranked += w * frame.rank(pct=True).to_numpy(dtype=np.float32)
@@ -429,10 +439,10 @@ try:
     log(f"combined {len(member_preds)} member(s) by per-column rank mean "
         f"over {int(scored.sum())} scored studies")
     for k in TAKES:
-        n = sum(1 for _n, s, _m in models if s == k)
+        n = sum(1 for _n, s, _h, _m in models if s == k)
         share = n * GRID_WEIGHT.get(k, 1.0) / max(
             sum(c * GRID_WEIGHT.get(g, 1.0)
-                for g, c in Counter(s for _n, s, _m in models).items()), 1e-6)
+                for g, c in Counter(s for _n, s, _h, _m in models).items()), 1e-6)
         log(f"  {k:2d}-slice group: {n} members, weight "
             f"{GRID_WEIGHT.get(k, 1.0)} -> {100 * share:.0f}% of the blend")
 
