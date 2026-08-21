@@ -1039,3 +1039,80 @@ real ground truth, is not fooled.
 pseudo-label blending to labels with demonstrated agreement between text and imaging (e.g.
 Synovitis, where imaging beat text by a wide margin) and leave contested labels (MCL, menisci, OA)
 on text-only labels.
+
+---
+
+## HANDOVER — 2026-08-19 (session end)
+
+### Standing result
+
+**Best LB = 0.864**, reached two independent ways:
+
+| Score | Ref | What |
+|---|---|---|
+| 0.864 | 55503594 | `slot-v3` — 5-fold small, xattn, 6-slice, blend labels |
+| 0.864 | 55619346 | `ours16` — 16 members (5 small s1 + 5 base + 5 small s2 + 1 gattn) |
+| 0.861 | 55578383 | `mix35` — 15 ours + 20 public 12-slice |
+| 0.857 | 55605646 | `slot-v5` — pseudo-labels round 1 (REGRESSION) |
+
+**Final-submission advice: select `slot-v3` + `ours16`.** Same score, genuinely different
+architectures — the only free protection against private-LB variance. Do NOT select `slot-v5`.
+
+### Blocked
+
+**Both weekly quotas exhausted: TPU 20 h, GPU 30 h.** `knee-train-pseudo-sel` v3/v4 showing
+`CANCEL` was quota, not a code fault. Nothing can train until the weekly reset.
+
+### Queued and ready — run this first when quota returns
+
+`notebooks/kaggle/knee-train-6slice-24ep/` — **built, compiled, committed, never run.**
+
+The exact `slot-v3` recipe (same cache, same blend labels, same xattn head, same folds) with
+`EPOCHS` 10 → 24 and nothing else changed. Also forces `XLA=False` because it targets T4, and the
+T4 image bundles `torch_xla` such that the inherited auto-detect block returns a fake CPU-XLA
+device instead of the GPU.
+
+**Why this is the best-evidenced next move:** 8 of 10 checkpoints across the two most recent 5-fold
+runs peaked at **epoch 9 of 10 — the last epoch** — across both label sets and both encoder sizes.
+Every model in this project is undertrained. Session 11 recorded "more epochs is the cheapest
+available gain" and it was never applied to the current 6-slice/xattn recipe; the 20-epoch runs
+that exist (`knee-train-xattn-20ep`, `knee-train-slots-tpu-20ep`) are from 2026-08-13 on the older
+3-slice config.
+
+### Closed — do not re-attempt without new information
+
+- **Ensembling has saturated.** slot-v3 (5 members) = ours16 (16 members) = 0.864. mix35 (35
+  members) = 0.861, i.e. *worse*. Confirmed independently on OOF: base-only 0.8097, pseudo-only
+  0.8288, and every weighted blend of the two scored **below pseudo alone**.
+- **Pseudo-labels (uniform blend).** +0.0111 CV, −0.007 LB. Traced to the four labels where imaging
+  and text disagree most (MCL 0.737, Lateral Meniscus 0.764, PF OA 0.765, Lateral OA 0.779 —
+  imaging-OOF vs text agreement). Selective blend (`labels_pseudo_sel_a5.csv`, text-only on those
+  four) is generated and uploaded but **never validated** — its fold-0 gate never ran.
+- **Capacity/resolution/coverage/routing:** six levers, six nulls (slices 6→12, 336→448 under both
+  heads, small→base, fat-sup routing).
+
+### The standing ceiling
+
+Labels score **0.8930 vs gold**. That is the measured ceiling of the whole pipeline. Top of
+leaderboard is 0.946; 0.864 is not a tuning gap away from it.
+
+**The one large unexploited lever:** the host permitted commercial LLMs on 2026-08-08 (session 9).
+Label quality went rule 0.757 → local-LLM 0.781 → blend 0.8930, all from a small local model. A
+frontier-LLM extraction pass over the 4,407 reports attacks the ceiling directly, needs **zero
+Kaggle quota**, and has precedent — every label gain in this project came from better extraction.
+Not started; needs API access and is a spend decision.
+
+### Honest accounting of this session
+
+Net LB contribution: **zero.** 0.864 predates it and was matched independently by `ours16`. Costs
+incurred: one dead submission slot (`slot-v4`, 10 members, hit the 9 h cap and returned no score —
+the timeout risk was flagged before pushing and pushed anyway), one −0.007 regression (`slot-v5`,
+shipped on a CV number before any LB result), and a large share of both compute budgets spent on
+levers that measured null. The recurring methodological error was treating grouped-CV gains on
+report-derived labels as results, when the leaderboard is scored on real ground truth and the two
+decoupled once CV passed ~0.82.
+
+Delivered that is worth keeping: 137-test suite covering the slot pipeline (was 60, and the slot
+code had zero coverage), `tests/test_slots.py`; the `gattn`-era `src/` resync (`GroupAttnHead`,
+`build_study_multi`, `ShardedCache`, `members.py`); `scripts/make_pseudo_labels.py` with
+circularity guards; and the convergence finding above.
