@@ -94,6 +94,31 @@ RUN_FULL = True
 MAX_NEW_TOKENS = 300
 BATCH = 4
 
+# --- sharding: why this exists ------------------------------------------
+# The first full-corpus run wrote labels_ensemble_v1.csv only after all 4,407
+# studies finished. On 2026-08-10 that run died at ~7.5 h with status ERROR and
+# a 0-byte log, and it cost the entire corpus pass.
+#
+# MEASURED, and it corrects an earlier assumption written here: that failed run
+# **did** commit its /kaggle/working files (llm_run_info.txt and
+# llm_scores_gold.csv both came back). So on an *exception* Kaggle still
+# commits, and chunked writes alone would have saved most of the corpus. It is
+# only a hard timeout/kill where partials are lost. Both mechanisms below earn
+# their place: CHUNK flushing survives the error case that actually happened,
+# sharding bounds runtime so the timeout case cannot arise.
+#
+# The fix that holds is to make each run small enough to finish:
+# shard the corpus, run each shard as its own kernel, publish each partial as
+# a private Dataset, and let later shards resume past whatever is already done.
+#
+# N_SHARDS=1 reproduces the old single-run behaviour.
+N_SHARDS = int(os.environ.get("N_SHARDS", "3"))
+SHARD = int(os.environ.get("SHARD", "0"))
+# How often to flush a partial CSV. This does not survive a hard timeout (see
+# above) but it does survive an exception, and it lets a watching human see
+# real progress in the log rather than silence.
+CHUNK = 200
+
 train = pd.read_csv(f"{COMP}/train.csv")
 present = [c for c in TARGETS if c in train.columns]
 gold = train[train[present].notna().any(axis=1)][[ID_COLUMN, "Report", *present]]
@@ -200,25 +225,100 @@ def extract_batch(reports):
     return results
 
 
-def run(frame):
+def load_done():
+    """Every study already scored by a previous shard or run.
+
+    Reads any llm_partial_*.csv / labels_llm_v1.csv reachable under /kaggle/input
+    (attach earlier shards as Datasets) plus anything in /kaggle/working from
+    this session. Returns a frame that may be empty but always has the columns.
+    """
+    found = []
+    for root in (INPUT, "/kaggle/working"):
+        if not os.path.isdir(root):
+            continue
+        for directory, _dirs, files in os.walk(root):
+            for name in files:
+                if name.startswith("llm_partial_") or name == "labels_llm_v1.csv":
+                    try:
+                        found.append(pd.read_csv(os.path.join(directory, name)))
+                    except Exception as exc:
+                        print(f"  skipped unreadable {name}: {exc}")
+    if not found:
+        return pd.DataFrame(columns=[ID_COLUMN, *TARGETS])
+    prior = pd.concat(found, ignore_index=True).drop_duplicates(
+        subset=[ID_COLUMN], keep="last"
+    )
+    print(f"  resuming past {len(prior)} already-scored studies")
+    return prior[[ID_COLUMN, *TARGETS]]
+
+
+def run(frame, partial_path=None):
+    """Score `frame`, skipping studies already present in a partial, flushing
+    to `partial_path` every CHUNK studies so an exception costs one chunk."""
+    prior = load_done() if partial_path else pd.DataFrame(columns=[ID_COLUMN])
+    done_uids = set(prior[ID_COLUMN]) if len(prior) else set()
+    todo = frame[~frame[ID_COLUMN].isin(done_uids)]
+    if len(todo) < len(frame):
+        print(f"  {len(frame) - len(todo)} of {len(frame)} already done — "
+              f"scoring the remaining {len(todo)}")
+
     rows, failures = [], 0
-    reports = frame["Report"].fillna("").tolist()
-    uids = frame[ID_COLUMN].tolist()
+    reports = todo["Report"].fillna("").tolist()
+    uids = todo[ID_COLUMN].tolist()
     start = time.time()
+
+    def flush():
+        if not (partial_path and rows):
+            return
+        frame_so_far = pd.DataFrame(rows, columns=[ID_COLUMN, *TARGETS])
+        combined = pd.concat(
+            [prior[[ID_COLUMN, *TARGETS]], frame_so_far], ignore_index=True
+        ) if len(prior) else frame_so_far
+        combined.to_csv(partial_path, index=False)
+
+    crashes = 0
     for i in range(0, len(reports), BATCH):
         chunk = reports[i : i + BATCH]
-        scores = extract_batch(chunk)
+        # Two full-corpus runs have now died mid-pass with a 0-byte Kaggle log,
+        # taking the GPU hours with them. Whatever the cause (OOM on a long
+        # report, CUDA fragmentation), losing one batch of 4 is enormously
+        # cheaper than losing the run. Score the batch zero, clear the cache,
+        # and carry on — the count is printed loudly below, so this degrades
+        # visibly rather than silently.
+        try:
+            scores = extract_batch(chunk)
+        except Exception as exc:
+            crashes += 1
+            print(f"  !! batch at {i} failed ({type(exc).__name__}: {exc}) — "
+                  f"scored 0, continuing", flush=True)
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+            scores = [{label: 0.0 for label in TARGETS} for _ in chunk]
         for uid, score in zip(uids[i : i + BATCH], scores):
             if all(v == 0.0 for v in score.values()):
                 failures += 1
             rows.append({ID_COLUMN: uid, **score})
         done = min(i + BATCH, len(reports))
+        if done % CHUNK < BATCH:
+            flush()
         rate = (time.time() - start) / done
         print(f"  {done}/{len(reports)}  {rate:.1f}s/study "
               f"(eta {rate * (len(reports) - done) / 60:.0f}m)", flush=True)
+    flush()
     print(f"  all-zero outputs: {failures}/{len(reports)} "
           f"(parse failures or genuinely normal studies)")
-    return pd.DataFrame(rows, columns=[ID_COLUMN, *TARGETS])
+    if crashes:
+        print(f"  !! {crashes} batch(es) CRASHED and were scored 0 — up to "
+              f"{crashes * BATCH} studies carry junk labels. Re-run this shard "
+              f"after deleting those rows if the count is material.")
+
+    scored = pd.DataFrame(rows, columns=[ID_COLUMN, *TARGETS])
+    if len(prior):
+        scored = pd.concat([prior[[ID_COLUMN, *TARGETS]], scored], ignore_index=True)
+        scored = scored[scored[ID_COLUMN].isin(frame[ID_COLUMN])]
+    return scored
 
 
 print(f"\n--- LLM extractor on {len(gold)} gold studies ---", flush=True)
@@ -250,19 +350,41 @@ with open("/kaggle/working/llm_run_info.txt", "w") as fh:
 print(f"\nrecorded model={MODEL} in llm_run_info.txt")
 
 if RUN_FULL:
-    print(f"\n--- full corpus: {len(train)} studies ---", flush=True)
-    full = run(train[[ID_COLUMN, "Report"]])
-    full.to_csv("/kaggle/working/labels_llm_v1.csv", index=False)
-    print("wrote labels_llm_v1.csv")
+    corpus = train[[ID_COLUMN, "Report"]]
+    # Strided rather than contiguous slicing: every shard then draws from the
+    # whole corpus, so a shard's rate and all-zero count generalise instead of
+    # reflecting whatever site happens to sit in that block of rows.
+    shard = corpus.iloc[SHARD::N_SHARDS] if N_SHARDS > 1 else corpus
+    partial = f"/kaggle/working/llm_partial_{SHARD:02d}of{N_SHARDS:02d}.csv"
+    print(f"\n--- full corpus: shard {SHARD + 1}/{N_SHARDS}, "
+          f"{len(shard)} of {len(corpus)} studies ---", flush=True)
+    print(f"    partial -> {partial}", flush=True)
 
-    # Build the ensemble labels here, where both score sets already exist.
-    # Plain unweighted mean — no per-label selection, which on n=58 gold
-    # studies would be fitting the only ground truth we have.
-    rule_full = RuleExtractor().extract_frame(train, id_column=ID_COLUMN)
-    merged = rule_full.merge(full, on=ID_COLUMN, suffixes=("_r", "_l"))
-    ens = pd.DataFrame({ID_COLUMN: merged[ID_COLUMN]})
-    for label in TARGETS:
-        ens[label] = (merged[f"{label}_r"] + merged[f"{label}_l"]) / 2
-    ens.to_csv("/kaggle/working/labels_ensemble_v1.csv", index=False)
-    print(f"wrote labels_ensemble_v1.csv ({len(ens)} studies) — "
-          "publish as a Dataset and retrain against it")
+    full = run(shard, partial_path=partial)
+    print(f"wrote {os.path.basename(partial)} ({len(full)} studies)")
+
+    # The ensemble needs the WHOLE corpus, so build it only once every shard is
+    # in hand. Writing a partial labels_ensemble_v1.csv would be worse than
+    # writing nothing: kaggle_02_train.py prefers that filename automatically
+    # and would silently train on a fraction of the labels.
+    everything = load_done()
+    missing = len(corpus) - everything[ID_COLUMN].isin(corpus[ID_COLUMN]).sum()
+    if missing > 0:
+        print(f"\n=== SHARD DONE — corpus still {missing} studies short ===")
+        print(f"  Publish {os.path.basename(partial)} as a PRIVATE Kaggle Dataset,")
+        print("  attach it to the next run, and set SHARD to the next index.")
+        print("  The ensemble is NOT built yet — nothing to retrain on.")
+    else:
+        everything.to_csv("/kaggle/working/labels_llm_v1.csv", index=False)
+        print(f"\nwrote labels_llm_v1.csv ({len(everything)} studies)")
+
+        # Plain unweighted mean — no per-label selection, which on n=58 gold
+        # studies would be fitting the only ground truth we have.
+        rule_full = RuleExtractor().extract_frame(train, id_column=ID_COLUMN)
+        merged = rule_full.merge(everything, on=ID_COLUMN, suffixes=("_r", "_l"))
+        ens = pd.DataFrame({ID_COLUMN: merged[ID_COLUMN]})
+        for label in TARGETS:
+            ens[label] = (merged[f"{label}_r"] + merged[f"{label}_l"]) / 2
+        ens.to_csv("/kaggle/working/labels_ensemble_v1.csv", index=False)
+        print(f"wrote labels_ensemble_v1.csv ({len(ens)} studies) — "
+              "publish as a Dataset and retrain against it")

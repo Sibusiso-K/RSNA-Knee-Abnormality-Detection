@@ -1,0 +1,18 @@
+{
+  "id": "sibusisokhumalo11/knee-llm-s0",
+  "title": "knee-llm-s0",
+  "code_file": "script.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": true,
+  "dataset_sources": [
+    "sibusisokhumalo11/knee-src",
+    "sibusisokhumalo11/knee-llm-partials"
+  ],
+  "competition_sources": [
+    "rsna-knee-abnormality-detection"
+  ],
+  "kernel_sources": []
+}

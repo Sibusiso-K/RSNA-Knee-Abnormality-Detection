@@ -1,0 +1,23 @@
+{
+  "id": "sibusisokhumalo11/knee-submit-public",
+  "title": "knee-submit-public",
+  "code_file": "script.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_internet": false,
+  "dataset_sources": [
+    "sibusisokhumalo11/knee-src",
+    "pilkwang/rsna-knee-weights"
+  ],
+  "competition_sources": [
+    "rsna-knee-abnormality-detection"
+  ],
+  "kernel_sources": [],
+  "model_sources": [
+    "metaresearch/dinov2/pyTorch/small/1",
+    "metaresearch/dinov2/pyTorch/base/1"
+  ],
+  "enable_tpu": false
+}

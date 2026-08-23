@@ -1,0 +1,25 @@
+{
+  "id": "sibusisokhumalo11/knee-train-448x6",
+  "title": "knee-train-448x6",
+  "code_file": "script.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "dataset_sources": [
+    "sibusisokhumalo11/knee-src",
+    "sibusisokhumalo11/knee-labels"
+  ],
+  "competition_sources": [
+    "rsna-knee-abnormality-detection"
+  ],
+  "kernel_sources": [
+    "sibusisokhumalo11/knee-cache-448x6-s0",
+    "sibusisokhumalo11/knee-cache-448x6-s1"
+  ],
+  "model_sources": [
+    "metaresearch/dinov2/pyTorch/small/1"
+  ]
+}

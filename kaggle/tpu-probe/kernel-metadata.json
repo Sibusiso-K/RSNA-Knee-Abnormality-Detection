@@ -1,0 +1,19 @@
+{
+  "id": "sibusisokhumalo11/knee-tpu-probe",
+  "title": "knee-tpu-probe",
+  "code_file": "script.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": true,
+  "enable_internet": false,
+  "dataset_sources": [
+    "sibusisokhumalo11/knee-src"
+  ],
+  "competition_sources": [],
+  "kernel_sources": [],
+  "model_sources": [
+    "metaresearch/dinov2/pyTorch/small/1"
+  ]
+}

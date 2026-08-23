@@ -4,14 +4,465 @@
 > Every other doc explains something stable; this one changes constantly.
 > **Update it at the end of every working session.** If it's stale, everything else is a trap.
 
-**Last updated:** 2026-08-14 (session 18 — repo resynced from Kaggle after 4 days of drift)
+**Last updated:** 2026-08-19, 18:30 UTC (session 18 — seven levers, one gain)
 
-> ⚠️ **This file was 4 days stale until 2026-08-14.** It claimed nothing had been submitted while
-> five submissions existed and the pipeline had been rebuilt end to end. The work lived only in
-> Kaggle notebooks and the `knee-src` dataset; none of it was in git. **Push after every session
-> that changes a notebook** — Kaggle is not a backup.
+> ## Session 18: the levers are exhausted, and that is the finding
+>
+> The board has not moved since 2026-08-14. **0.864**, through 5 members, 16
+> members and 35 members. Everything tried since is null:
+>
+> | Lever | fold 0 | vs 0.8207 | Verdict |
+> |---|---|---|---|
+> | `gattn` — slice axis inside the model | 0.8171 | −0.0036 | nothing |
+> | 448 px **with the spatial head** | 0.8240 | +0.0033 | nothing |
+> | labels_v1 (probe, deliberately worse) | 0.7872 | −0.0335 | **real, and informative** |
+>
+> and on the board: 5 members 0.864, 16 members **0.864**, 35 members 0.861.
+>
+> ### The label probe is the one result worth keeping
+>
+> There is no better label set to test — v2 scores 0.8935 against gold and v1
+> scores 0.8930, which is 0.0005 on 58 studies. So the slope was measured
+> *downward* instead, with labels 0.137 worse:
+>
+>     labels 0.8930 -> CV 0.8207        labels 0.7565 -> CV 0.7872
+>     slope = 0.0335 / 0.137 = 0.245
+>
+> The effect is three times the noise band, so the model demonstrably tracks
+> its targets — but it recovers only a quarter of any label change. **Perfect**
+> labels would be worth ≈ +0.026 CV. A *realistic* improvement to ~0.93 buys
+> ≈ +0.009, under the ±0.011 bar and therefore unmeasurable. Clearing +0.02
+> needs labels at 0.975 against gold, from 58 gold studies and multilingual
+> reports.
+>
+> **So labels are a real constraint with poor leverage.** Rebuilding that
+> pipeline would have cost days for a gain we could not detect. Forty minutes
+> to close the direction was the best trade of the session.
+>
+> ### 448 px deserves its own note, because the retest was justified
+>
+> The 2026-08-12 null (−0.0014) was measured with the SLOT head, which
+> mean-pools every patch token into one vector per slot — 336→448 raises tokens
+> 577→1025 and all the extra ones were averaged into the same vector. Removing
+> that confound **did** flip the sign, −0.0014 → +0.0033. The reasoning was
+> right and the effect is still a third of what it needs to be. Resolution is
+> not the constraint under either head. Do not test it a third time.
+>
+> ### Where that leaves the model
+>
+> Seven levers, all null: epochs (×3), encoder size, pixel density (×2, both
+> heads), slices past six, the aggregation head, ensemble breadth, label
+> quality. **One lever has ever paid: slice coverage 3→6, +0.0236.**
+>
+> A score insensitive to capacity, resolution, aggregation, ensemble size AND
+> targets is not limited by any of them. The next move is not another
+> hypothesis generated from our own results — that well is dry, and two days of
+> them returned noise. It is to read what the **0.93+** solutions do
+> differently. That is reading, not compute.
+>
+> Infrastructure landed this session and is worth keeping regardless:
+> mixed-grid caching (`build_study_multi`), the member fingerprint gate
+> (`src/model/members.py`), and memmap-backed sharded reads
+> (`src/data/shards.py`) — a 29.7 GB cache no longer needs 59 GB of RAM.
 
-**Days to final submission (2026-10-22):** ~69
+> ## Session 17: the borrowed-weights shortcut does not exist
+
+> ## Session 17: the borrowed-weights shortcut does not exist
+>
+> The plan was to clear 0.9 by blending publicly released checkpoints, on the
+> strength of the ~0.899 reputation attached to them. **Both public sets were run
+> through our pipeline and scored, and the reputation did not survive contact:**
+>
+> | Submission | Members | LB |
+> |---|---|---|
+> | `55573162` public-20 (`pilkwang/rsna-knee-weights`) | 20 | **0.839** |
+> | `55574007` public-25 (+5 `champ`) | 25 | **0.844** |
+> | `55503594` **ours** | 5 | **0.864** |
+>
+> Their self-reported holdout was 0.8381 and it transferred to the board almost
+> 1:1. Ours goes CV 0.8185 → LB 0.864, roughly +0.045. **Our model is the
+> stronger one and the local work is what to keep pushing.**
+>
+> Two defects found on the way, both in reading other people's configuration
+> rather than in the model:
+>
+> - **The `champ` members were scored on anatomy they were never trained on.**
+>   They declare 224 px, 9 slices, band 0.35–0.65; we fed them 336 px, 12 slices,
+>   band 0.2–0.8. Nothing raised — DINOv2 interpolates its position embeddings —
+>   so five of twenty-five members in a scored submission were reading the wrong
+>   scale. `src/model/members.py` now gates on the full fingerprint, not just
+>   whether the weights load.
+> - **A band recorded as a string killed a 35-member GPU run ten minutes in.**
+>   One publisher writes `[0.2, 0.8]`, another `"0.35,0.65"`; a string is
+>   iterable, so the parser walked characters and died on `float('.')`. That
+>   logic now lives in a module with tests that `build.sh` runs before every
+>   push, because every checkpoint we might blend is on disk and it had no
+>   business being discovered on an accelerator.
+>
+> **Mixed-grid ensembling is now possible.** The 6- and 12-slice grids are both
+> `linspace` over the band and share only their endpoints, so neither nests in
+> the other and a 6-slice model cannot be fed slices carved from a 12-slice
+> cache. `build_study_multi` reads each study's headers once, decodes the *union*
+> of both grids, and builds each independently — and proves itself byte-identical
+> to `build_study` on three real studies before any member is scored.
+>
+> **Also: submission never needed a browser.** `kaggle competitions submit -k
+> <kernel> -v <version> -f submission.csv` handles code competitions. Eleven
+> sessions of manual Chrome dances for no reason.
+>
+> `55578383` (mix35: 15 ours + 20 public, weighted 60/40 to ours) and `55574915`
+> (10 members, breadth only) are both pending. The second is the more informative
+> one — it changes one variable.
+
+> ## Session 15: we are 713th of 1,185, and below a notebook anyone can fork
+>
+> **Measured, not estimated** (Kaggle API, 2026-08-11):
+>
+> | | |
+> |---|---|
+> | Us | **0.783 — rank 713 / 1,185** |
+> | Top 10 cutoff | **0.930** |
+> | Rank 100 | 0.901 · Rank 50 0.912 · Rank 1 0.943 |
+> | Teams ≥ 0.80 | **693** |
+> | Free public notebook | **0.899** (`aadigupta7686/0-899-let-me-cook`, a fork of the 280-vote `pilkwang/rsna-knee-baseline-v1`) |
+>
+> **The gap is not mysterious and it is not capacity.** Reading our own source against
+> the four preprocessing defects published by a top team (discussion 734105 §6), we have
+> two of them outright, plus three more of our own. Every one is fixed in code as of this
+> session; none has been trained yet.
+>
+> | Defect | Us before | Now |
+> |---|---|---|
+> | **Laterality normalisation** | ❌ absent entirely | ✅ from image centre in patient space |
+> | **Effective resolution** | ❌ 160 mm @ 224 px = 0.714 mm/px | ✅ 130 mm @ 336 px = 0.387 mm/px |
+> | **Sequence routing** | ❌ 3 planes, fluid-only, `iloc[0]` | ✅ 6 slots, weighting from DICOM headers |
+> | **Vertical-flip augmentation** | ❌ destroyed where findings sit | ✅ removed (rigid jitter only) |
+> | **DICOM decode per epoch** | ❌ ~3,600 s/epoch, ~1.3 M decodes/run | ✅ cached once on free CPU |
+> | Slice ordering by geometry | ✅ already correct | unchanged |
+> | 2.5D triplet into encoder | ✅ already correct | unchanged |
+>
+> **Laterality is the big one.** Five of twelve targets are side-specific (Medial/Lateral
+> Meniscus, Medial/Lateral OA, MCL). Left and right knees are mirror images, so "medial"
+> was landing on opposite sides of the frame at random across **42% of the macro metric**.
+> Measured on 40 studies: side resolves for **100%** of them (L=21, R=19, none unknown).
+>
+> **Resolution explains the dead 160 mm experiment.** At 0.714 mm/px a 1–3 mm meniscal
+> tear is 1–4 pixels. The crop was the right idea at the wrong scale — which is why it
+> returned 0.002 rather than nothing at all.
+>
+> ⛔ **GPU quota exhausted: 34:15 / 30 hrs.** Resets weekly.
+> ✅ **Kaggle TPU untouched: 00:00 / 20 hrs.**
+> ✅ **DICOM decoding is CPU work and CPU notebooks do not draw on the GPU quota.**
+> That is the unblock: `kaggle_05_cache.py` builds the whole input on free CPU.
+>
+> **The cache is the strategic move, not just an optimisation.** `kaggle_02_train.py`
+> decoded every DICOM inside `__getitem__`, so ~90% of each GPU hour went to decoding
+> while the GPU idled. Decoding once converts the 30 h/week from ~1/8 useful to nearly
+> all useful — roughly **8x more effective training throughput on the same free-tier
+> allowance**. It also makes training portable: the cache is ~9 GB, so it runs on
+> Lightning or anywhere else, while the 570 GB of DICOMs never leave Kaggle.
+>
+> **Labels: ours are superseded, and that closes a blocked workstream.**
+> `scripts/compare_labels.py` re-scores every candidate on the same 58 gold studies:
+>
+> | Source | macro vs gold |
+> |---|---|
+> | `stevenleehans/llm_labels_v4_blend` | **0.8927** |
+> | cross-author rank-mean blend (steven + pilkwang + sol56) | **0.8941** |
+> | `pilkwang/report_labels_v2` | 0.8700 |
+> | **ours, `labels_v1.csv` (rule-only)** | **0.7565** |
+> | ours + the public sets blended in | 0.8849 — *worse*, ours drags it down |
+>
+> ⚠️ On 58 studies anything under ~0.02 is unresolvable, so 0.8941 and 0.8927 are the
+> same number. The honest reading is "the public sets are far better than ours, and
+> which of them is best is undecided".
+>
+> **Consequence: stop work on LLM shard 2.** It was blocked on GPU quota and aimed at
+> `labels_ensemble_v1.csv` (projected ~0.8234). The public sets already beat that
+> projection by ~0.07 without spending an hour of quota. That workstream is closed.
+>
+> ⚠️ **Two guards worth keeping.** `compare_labels.py` refuses candidates that score a
+> perfect 1.0000: `barun2104`'s fold files carry `train.csv`'s own label columns —
+> 696/696 cells identical on gold, NaN everywhere else. Ranking a globbed directory by
+> score would have crowned the answer key and let it define the label strategy. And the
+> cache build now audits geometry-derived laterality against the `Laterality` tag,
+> because a mirror applied to the wrong half of the corpus is strictly worse than none.
+>
+> ### ✅ `knee-cache` built — 4,407 studies, 8.96 GB, 1h58m, zero GPU quota
+>
+> Measured on the **full corpus**, not a sample:
+>
+> | | |
+> |---|---|
+> | Studies cached | 4,407 / 4,407 |
+> | Laterality unresolved | **13 (0.3%)** |
+> | Tag vs geometry agreement | **11,503 / 11,715 (98.2%)** |
+> | Series geometry resolves that have **no** tag | **12,229** |
+> | Physical crop applied | 19,710 / 19,751 (**100%**) |
+> | Slot fill | 0.747 overall |
+>
+> Per slot: SAG_FLUID_FS 0.932 · COR_FLUID_FS 0.956 · AX_FLUID_FS 0.904 ·
+> SAG_FLUID_NOFS 0.579 · COR_T1 0.637 · SAG_T1 0.475.
+>
+> **L=2,067 R=2,327 — 47% of the corpus was being fed to the encoder mirrored.** And
+> geometry resolves *more* series (12,229) than carry a `Laterality` tag at all (11,909),
+> so it more than doubled coverage rather than merely reproducing the tag. Where the two
+> disagree (212 series, 1.8%) the tag wins, which is the safe default.
+>
+> The three structural slots carry 47–64% coverage. Those series existed all along and
+> `pick_series` discarded every one of them.
+>
+> ### ✅ Cache audited on free CPU — every check green
+>
+> | Check | Result |
+> |---|---|
+> | Studies with zero usable slots | **0** |
+> | Slots per study | mean 4.48, min **2**, max 6 |
+> | Scanner fingerprint groups | **152 / 4,407 (ratio 0.034)**, 42 singletons |
+> | Largest groups | 353, 258, 237, 217, 214 — top-20 cover 65.1% |
+> | Gold studies present | **58 / 58** |
+> | Label merge (`labels_blend_v1`) | 4,406 / 4,407 |
+> | Training pool after gold holdout | **4,349** |
+> | Fold sizes | 870/870/870/870/869 — ratio **1.00** |
+>
+> **152 groups, not 3,229.** That is the check worth having run: reusing `_clean_tag`'s
+> whole-MHz rounding of `ImagingFrequency` kept the grouping coarse. A near-unique
+> fingerprint degrades GroupKFold to random KFold and returns the 0.053 of site leakage
+> as free-looking score, and it would be invisible — the run completes and prints a
+> better number. 4,349 also matches the historical grouped-CV pool exactly.
+>
+> ### Training is written, dry-run, and blocked only on quota
+>
+> The whole chain was exercised locally on CPU against the 40-study smoke cache with
+> DINOv2-small: cache → label alignment → grouped folds → train → checkpoint → reload
+> `strict=True` → forward with a partially masked study. 11.0M trainable parameters.
+> **The AUC from that run is meaningless and is not recorded** — 11 validation studies,
+> one epoch. It proves the plumbing, nothing else.
+>
+> ⛔ `kaggle kernels push` returns **"Maximum weekly GPU quota of 30.00 hours reached"**
+> and creates no kernel version, so retrying the push is a clean, spam-free way to poll
+> for the reset. Reset timing is genuinely unclear — public sources disagree between
+> Saturday and Sunday 00:00 UTC, Kaggle has a "floating" quota feature, and the settings
+> tooltip does not say. Do not write a date here until one is observed.
+>
+> ⛔ **Lightning AI is not an option on the free tier: 0 credits** across org, unallocated
+> and total, with no personal account holding a separate allowance. Confirmed 2026-08-12.
+>
+> **Not yet known:** whether any of this moves the leaderboard. Nothing has been trained
+> on the new representation. The numbers above are input-quality measurements, and this
+> file has three times recorded a label improvement that did not transfer.
+>
+> ### ✅ Run 1 (TPU): CV 0.7948 / gold58 0.8105 — and 20 epochs does NOT help
+>
+> | Schedule | best CV | gold58 | wall |
+> |---|---|---|---|
+> | 10 epochs | **0.7948** | **0.8105** | 30 min |
+> | 20 epochs | 0.7964 | 0.8090 | 57 min |
+>
+> +0.0016 for double the training: inside noise. The 20-epoch curve plateaus at
+> epoch ~5 (0.7885) and oscillates 0.786–0.793 for fourteen more epochs while loss
+> falls 0.550 → 0.436. **Same overfitting signature the old pipeline had.** Training
+> length is saturated and is not the binding constraint. Do not revisit.
+>
+> Per-label at 10 epochs: Baker's 0.845 · Medial OA 0.832 · Effusion 0.831 ·
+> Synovitis 0.825 · Fracture 0.815 · Contusion 0.813 · Medial Meniscus 0.812 ·
+> ACL 0.782 · Lateral OA 0.771 · Lateral Meniscus 0.754 · MCL 0.747 · **PF OA 0.711**.
+>
+> ⚠️ **0.7948 is NOT comparable to the old 0.7746.** Different labels (blend 0.8930 vs
+> rule-only 0.7565) and a different validation target (undecided cells dropped).
+>
+> ⚠️ **Do not reuse the +0.008 CV→LB offset.** It was measured on the old pipeline with
+> old labels against a different target. What CV 0.7948 maps to on the leaderboard is
+> genuinely unknown until a submission lands. **`gold58` is the better LB predictor** —
+> it is scored against real annotations, as the leaderboard is — but on 58 studies it
+> carries ±0.05 easily.
+>
+> ### ✅ LB 0.850 — and the CV→LB offset is +0.055, not +0.008
+>
+> Submission `55475708`, 5-fold rank-mean, 2026-08-13.
+>
+> | | CV | LB | offset |
+> |---|---|---|---|
+> | old pipeline | 0.7746 | 0.783 | +0.008 |
+> | **new pipeline** | **0.7949** | **0.850** | **+0.055** |
+>
+> **Rank 627 / 1341**, up from 713 / 1185. The field moved too: top-10 cutoff is now
+> **0.935** (was 0.930), rank 100 = 0.907, rank 200 = 0.899.
+>
+> The offset changed because the CV *metric* changed — blend labels, undecided cells
+> dropped — so the two CV columns are not the same measurement. **Site-grouped CV is
+> substantially harsher than this leaderboard.** Use +0.055 as the working anchor at
+> this operating point, and re-measure it rather than extrapolating far from it.
+>
+> **Still +0.085 short of top 10.** The rebuild bought the input, not the field.
+>
+> ⚠️ **More slices per slot is NOT the gap.** The public 0.899 runs `N_GROUP_MAX = 1`,
+> so it gets no inference-time group averaging either. A cache rebuild for more slices
+> would buy a difference that recipe does not contain. Checked before spending ~4 h on it.
+>
+> ⚠️ **Detection floor: ±0.011 on one fold** (measured across the 5-fold spread
+> 0.7817–0.8041). Any single-fold experiment worth less than ~0.02 is unmeasurable
+> without repeating folds.
+>
+> ### 🔑 THE BOTTLENECK IS THE HEAD — and it explains all four nulls
+>
+> Read from what the top public work actually publishes (2026-08-13), not inferred.
+>
+> **`bend-the-knee-to-dinov3-ensembled`** — rank-mean of **~25 members**: 20 DINOv2
+> (pilkwang), 4 (tonylica), 1 DINOv3 ViT-S/16, plus a **RadImageNet ResNet-50**
+> (radiology-pretrained). Ours is five folds of one config.
+>
+> **`domain-adaptation-beats-resolution`** — **LB 0.883** from five DINOv2 ViT-B/14
+> trained **off-Kaggle**, on Qwen3-14B soft targets with **confidence weights scaling
+> each label's loss**. Its own numbers: 224px → 0.866, 336px → 0.883. Resolution helps
+> to 336 then flattens — an independent confirmation of our 448 null.
+>
+> **The aggregation head is the difference:**
+>
+> | Stage | Ours (`SlotHead`) | Theirs (`RTAHMIL`) |
+> |---|---|---|
+> | Slices | none — they are RGB channels | TransformerEncoder + slice positional embeddings |
+> | Series pooling | fixed CLS+mean+focal | learned query + MultiheadAttention |
+> | Slot/plane/sequence | fixed prior tilt | **learned embeddings** |
+> | Study | none | **2-layer TransformerEncoder** across series |
+> | Targets | 12 queries over **6 pooled vectors** | 12 queries cross-attending the **full token sequence** |
+> | Target structure | none | **group embeddings** (ligament/meniscus/OA/inflammation/bone) |
+> | Heads | one shared linear | **12 separate MLPs** |
+>
+> **Our head collapses each slot to one vector before any finding-specific reasoning.**
+> Twelve queries then attend over six numbers.
+>
+> That single choice accounts for everything below:
+> - **capacity null** — the encoder was never the constraint
+> - **resolution null** — pooling averages the extra detail away before the head sees it
+> - **focal findings worst** (PF OA 0.711, MCL 0.747, Lat Meniscus 0.754) — they need
+>   spatial attention the head cannot express; diffuse findings survive pooling
+> - **ensembling only +0.0086** — it averages models sharing one bottleneck
+>
+> **Next action: rebuild the head. Keep the cache, the encoder and the labels fixed.**
+>
+> ### Four levers, four nothings — the model is saturated on this representation
+>
+> | Lever | fold-0 CV | vs 0.7990 | Verdict |
+> |---|---|---|---|
+> | 8 vs 4 epochs (old pipeline) | — | — | nothing |
+> | 20 vs 10 epochs | 0.7964 | +0.0016 | noise |
+> | DINOv2-base (43.1M vs 11.0M) | 0.7985 | −0.0005 | nothing |
+> | **448 px (0.290 mm/px vs 0.387)** | **0.7976** | **−0.0014** | **nothing** |
+> | 2-model rank-mean | 0.8077 | +0.0086 | real, under the 0.010 bar |
+>
+> The 448 run was valid, not a silent no-op: the log shows `(4407, 6, 3, 448, 448)`
+> and step time rose 0.35 s → 0.56 s, matching 1025 tokens against 577.
+>
+> **Neither capacity nor pixel density moves this.** Everything sits at ~0.798 CV /
+> ~0.82 gold58. Do not spend further runs on either axis.
+>
+> ⚠️ **A retracted inference.** This file previously argued the model "does not reach
+> its teacher" (0.82 vs labels' 0.8930) and concluded information is lost in the
+> representation. That does not follow: a perfect *image* model need not match
+> *report-derived* labels, because reports carry context no pixel contains. The sound
+> version of the argument is external — **teams score 0.935 on the same hidden test
+> set**, so the headroom is real even though this particular diagnostic did not
+> establish where it lives.
+>
+> ### Three capacity levers, three nothings — and where the loss actually is
+>
+> | Lever | Result | Verdict |
+> |---|---|---|
+> | 8 vs 4 epochs (old pipeline) | — | nothing |
+> | 20 vs 10 epochs | +0.0016 | noise |
+> | **DINOv2-base vs small** (43.1M vs 11.0M trainable) | **−0.0005** | **nothing** |
+>
+> **Capacity and training budget are not the constraint.** Stop proposing experiments
+> that assume they are.
+>
+> **The diagnostic that should drive everything from here:** the labels score **0.8930**
+> against the 58 gold studies; the model scores **~0.82** against the same studies.
+> The model does not reach its own teacher, so label noise is not the binding ceiling
+> either — roughly 0.07 of headroom sits unused. What remains is the **image
+> representation**: resolution, slice coverage, or how the slots are formed.
+>
+> ### Diversity pays a little, but not enough to buy
+>
+> Measured on fold 0 (`knee-diversity`), both members on the same validation split:
+>
+> | | fold-0 CV |
+> |---|---|
+> | base alone | 0.7988 |
+> | small alone | 0.7992 |
+> | rank-mean of both | **0.8077 (+0.0086)** |
+> | per-label Spearman | mean 0.853, min 0.751, max 0.925 |
+>
+> Real but below the **pre-committed 0.010 bar**, so base × 5 folds was NOT bought —
+> it would have cost ~3.5 h of a 20 h budget to average harder over the same
+> bottleneck. **base fold 0 already exists and joins the final ensemble free.**
+>
+> The pre-registration is the point: the threshold was written into the script before
+> the run, and honouring it at +0.0086 is what makes the next one worth anything.
+>
+> ### ⚠️ Operational limits, all measured the hard way
+>
+> | Limit | Consequence |
+> |---|---|
+> | **Kaggle TPU image cannot decode our DICOMs** | Every study fails; submission becomes a constant 0.5 |
+> | **Only ONE concurrent TPU session** | Training and a TPU submission cannot overlap |
+> | TPU billing is wall-clock, incl. the 9 GB mount | Run all folds in ONE kernel, not five |
+> | `find_dir` over `train_series/` costs ~1,100 s/call | `SKIP_DIRS` is not optional |
+> | GPU/CPU image DOES decode | Use GPU for submissions once quota refreshes |
+>
+> **The TPU decode failure is the important one.** The same code decodes fine on the
+> CPU image (L=1 R=2, crop 11/11) and fails on all 3 studies on TPU. Submissions run
+> with internet OFF, so nothing can be pip-installed to fix it at scoring time.
+> **Submit on GPU or CPU, never TPU.** Train on TPU.
+>
+> It was caught only by the constant-submission tripwire in `kaggle_07_submit_slots.py`
+> — six members loaded correctly, the rank-mean ran, and it wrote an all-0.5 file that
+> would have scored ~0.5 and burned a slot. Keep that tripwire.
+>
+> ### Cost model on TPU (measured)
+>
+> | | |
+> |---|---|
+> | Startup (mount + load 8.34 GB + folds) | ~98 s |
+> | Step (batch 8 = 48 slot images) | ~0.35 s |
+> | Epoch (434 steps + validation) | ~160 s |
+> | 10-epoch fold | **~30 min** |
+>
+> A fold costs ~2.5% of the weekly TPU budget, so experiments are cheap now. The
+> binding cost is no longer compute.
+>
+> ### Experiment queue, in priority order
+>
+> **Run 1 is a measurement, not an attempt to win.** Its job is to produce one honest
+> grouped-CV number on the new representation so everything after it has a baseline to
+> be compared against. Do not stack changes onto it.
+>
+> | # | Change | Cost | Why it is where it is |
+> |---|---|---|---|
+> | 1 | Fold 0, DINOv2-small, 10 ep | 1 fold | The baseline. Nothing else is interpretable without it. |
+> | 2 | 5-fold ensemble | 5 folds | The public 0.899 is a *single* model. Folds are the most reliable gain in the list. |
+> | 3 | Label-correlation post-processing | **free** | Macro AUC is per-label and rank-based, so no calibration is needed — but predicted Effusion may rank Synovitis better than predicted Synovitis does (0.7115 vs 0.6780 *on labels*). Pure post-processing, testable on existing predictions. |
+> | 4 | Cache v2: more slices/slot (N_GROUP 2–3) | **free CPU** + folds | The public baseline is stuck at 3 slices by Kaggle RAM. We are not: the cache is built offline. Buys stack augmentation in training and averaging at inference. |
+> | 5 | DINOv2-base | folds | 2x feature width, ~4x activation memory. May need BATCH 4. |
+> | 6 | Higher resolution (448 = 14x32) | **free CPU** + folds | 0.29 mm/px. Only after 4 shows more input helps. |
+>
+> **Do not reorder 3 and 4 ahead of 2.** Both are attractive because they are cheap, and
+> both change the input or the output rather than the amount of training — which is
+> exactly the class of change this project has repeatedly measured at ~0.002.
+>
+> **A note on calibration, so nobody spends time on it:** the metric is macro AUC over
+> twelve *independent* per-label AUCs. AUC reads order only. So per-label calibration,
+> temperature scaling and threshold tuning are all worth exactly zero here. Only the
+> within-label ranking matters.
+
+**Days to final submission (2026-10-22):** ~72
+
+**Days to final submission (2026-10-22):** ~64
+
+> ⚠️ **Kaggle is not a backup.** This file was 4 days stale once because the work lived only in
+> Kaggle notebooks and the `knee-src` dataset. It happened AGAIN on 2026-08-19: session 18's
+> branch sat unpushed while another session reconstructed `GroupAttnHead` and the member gate
+> from the Kaggle dataset by hand. **Push after every session, on every branch.**
 
 ---
 
@@ -23,10 +474,18 @@ since. Top of board is 0.946; rank 49 is 0.920.
 | Phase | Status |
 |---|---|
 | 0 — Access | ✅ Done |
-| 1 — Labels from reports | ✅ **Blend labels 0.8930** vs gold (`labels_blend_v1.csv`), up from 0.8234 ensemble → 0.757 rule-only |
-| 2 — Site-grouped CV | ✅ Done and **verified honest** (151 fingerprints / 4,349 studies) |
-| 3 — Imaging model | ✅ **Slot pipeline, DINOv2-small, 5-fold mean CV 0.8185** |
-| 4 — Submission | ✅ **Submitted. 4 scored, 1 in flight** |
+| 1 — Labels from reports | ✅ **Blend labels 0.8930** vs gold (`labels_blend_v1.csv`); rule-only was 0.757 |
+| 2 — Site-grouped CV | ✅ Done and **verified honest** (151 groups / 4,349 studies) |
+| 3 — Imaging model | ✅ **15 members across 3 families**, best family CV 0.8185 (6 slices/slot, xattn head) |
+| 4 — Submission | ✅ **Best LB 0.864** (`55503594`). History: 0.783 → 0.850 → 0.856 → **0.864** |
+| 5 — Ensemble breadth | ❌ **Exhausted.** 5 members 0.864, 16 members 0.864, 35 members 0.861 |
+
+**Only one lever has ever paid.** Slice coverage: 3 → 6 slices/slot gave **+0.0236 across
+all five folds**, concentrated on the *focal* findings exactly as the spacing hypothesis
+predicted (Fracture +0.068, PF OA +0.049, Medial Meniscus +0.049) while diffuse ones
+barely moved (Effusion +0.007). Epochs (×3 attempts), DINOv2-base (−0.0005), 448 px
+(−0.0014) and 12 slices (−0.005, saturated) all returned noise. **Capacity and pixel
+density are not the constraint — do not re-test them.**
 
 ### Submission history — the CV↔LB calibration curve
 
@@ -41,6 +500,11 @@ since. Top of board is 0.946; rank 49 is 0.920.
 The rebuild (2 → 3) bought **+0.067 LB for +0.020 CV**. CV understates the leaderboard because CV is
 scored against noisy report-derived labels while the LB is scored against real ground truth — so
 **CV gains are a lower bound, not a forecast.**
+| 6 | **ours16** 16 members (5 small s1 + 5 base + 5 small s2 + 1 gattn) | — | **0.864** |
+| 7 | **mix35** ours 15 (60%) + 20 public 12-slice | — | 0.861 |
+| 8 | pseudo-labels round 1 (other session) | +0.0111 | 0.857 |
+
+**Ensemble breadth is exhausted:** 5 members 0.864, 16 members 0.864, 35 members 0.861.
 
 **The CV↔LB offset is stable**, which is what makes CV usable for ranking experiments:
 
