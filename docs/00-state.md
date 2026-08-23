@@ -457,14 +457,24 @@
 
 **Days to final submission (2026-10-22):** ~72
 
+**Days to final submission (2026-10-22):** ~64
+
+> ⚠️ **Kaggle is not a backup.** This file was 4 days stale once because the work lived only in
+> Kaggle notebooks and the `knee-src` dataset. It happened AGAIN on 2026-08-19: session 18's
+> branch sat unpushed while another session reconstructed `GroupAttnHead` and the member gate
+> from the Kaggle dataset by hand. **Push after every session, on every branch.**
+
 ---
 
 ## Where we are right now
 
+**Public LB 0.864** (slot-v3, scored 2026-08-14). Was rank 721 / 1,488 at 0.856; rank not re-checked
+since. Top of board is 0.946; rank 49 is 0.920.
+
 | Phase | Status |
 |---|---|
 | 0 — Access | ✅ Done |
-| 1 — Labels from reports | ✅ **Ensemble (rule + LLM) 0.8234** vs gold, up from 0.757 rule-only |
+| 1 — Labels from reports | ✅ **Blend labels 0.8930** vs gold (`labels_blend_v1.csv`); rule-only was 0.757 |
 | 2 — Site-grouped CV | ✅ Done and **verified honest** (151 groups / 4,349 studies) |
 | 3 — Imaging model | ✅ **15 members across 3 families**, best family CV 0.8185 (6 slices/slot, xattn head) |
 | 4 — Submission | ✅ **Best LB 0.864** (`55503594`). History: 0.783 → 0.850 → 0.856 → **0.864** |
@@ -477,108 +487,68 @@ barely moved (Effusion +0.007). Epochs (×3 attempts), DINOv2-base (−0.0005), 
 (−0.0014) and 12 slices (−0.005, saturated) all returned noise. **Capacity and pixel
 density are not the constraint — do not re-test them.**
 
-**Trained model exists and works.** `knee-model-v1` (fold 0, EfficientNetV2-S 2.5D +
-attention-MIL) scores **0.7746** under honest site-grouped CV — well clear of the 0.598
-metadata-only floor, so it is reading images, not memorising scanners.
+### Submission history — the CV↔LB calibration curve
 
-### `knee-train-8ep` landed: 8 epochs is **not** better than 4
-
-Completed 2026-08-10, 29,974 s (8.3 h) on T4×2, ~3,600 s/epoch.
-
-| Epoch | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 |
-|---|---|---|---|---|---|---|---|---|
-| AUC | 0.6707 | 0.7249 | 0.7487 | 0.7388 | 0.7600 | 0.7642 | **0.7697** | 0.7664 |
-| loss | 1.0620 | 1.0168 | 0.9878 | 0.8940 | 0.7646 | 0.6231 | 0.4880 | 0.4135 |
-
-**Best 0.7697 (epoch 6) vs the 4-epoch run's 0.7746 — doubling the epochs did not help.** The −0.005
-is within noise; the honest statement is "no improvement", not "a regression".
-
-**Do not compare these two runs epoch-by-epoch.** `OneCycleLR` sets
-`total_steps = EPOCHS * steps_per_epoch`, so the LR schedule stretches to whatever `EPOCHS` is. At
-epoch 3 the 4-epoch run had fully annealed (0.7746 = converged) while this run was still mid-
-schedule (0.7388). Only the end-of-schedule numbers are comparable. The handover's expectation —
-"should beat 0.7746, fold 0 was still improving at epoch 3" — was based on exactly that invalid
-comparison.
-
-**The last two epochs are an overfitting signature:** loss fell 1.06 → 0.41 (−61%) while AUC
-plateaued and then *declined* at epoch 7, with LR annealing to zero. More epochs are memorising the
-training set, not learning the findings. **This is direct evidence for the central thesis: capacity
-and training budget are not the binding constraint — label noise is.** Do not extend to 12+ epochs;
-spend the GPU hours on ensemble labels instead.
-
-⚠️ The checkpoint carries only `backbone` / `fold` / `score` — **not** the `labels` / `epochs` /
-`n_groups` provenance the handover describes. That change (a1c6fd7) landed after this kernel was
-pushed, so `knee-src` predates it. We know from the run config it was rule-only `labels_v1`, 8
-epochs, but the file itself does not say so. Provenance is not retroactive.
-
-### ✅ RESOLVED: our CV transfers, and the gap to the field is real
-
-**First submission, 2026-08-10: public LB `0.783`** (submission `55411501`, fold-0 `knee-model-v1`,
-rule-only labels). Site-grouped CV for the same checkpoint was **0.7746**.
-
-### ⚠️ Two calibration points now, and they disagree — do not trust a fixed offset
-
-| Submission | CV | LB | offset |
+| # | Config | CV | LB |
 |---|---|---|---|
-| v1 fold 0, 16/224 | 0.7746 | **0.783** | +0.0084 |
-| v2 fold 0 + 160 mm crop | 0.7767 | **0.781** | +0.0043 |
+| 1 | `knee-model-v1` EfficientNetV2-S 2.5D + attn-MIL, rule labels | 0.7746 | 0.783 |
+| 2 | `knee-model-v2` + physical 160 mm FOV crop | 0.7767 | 0.781 |
+| 3 | **slot-v1** 5× DINOv2-small, 6 slots, 336 px, blend labels | 0.7949 | **0.850** |
+| 4 | **slot-v2** 6-member cross-family (3× small + 3× base) | ~0.805 | **0.856** |
+| 5 | **slot-v3** 5-fold rank-mean, xattn head, 6 slices/slot | **0.8185** | **0.864** |
 
-**CV went up (+0.0021) while LB went down (−0.002).** The offset is not a constant, and the
-ordering does not even survive: the model with the better CV scored worse on the leaderboard.
+The rebuild (2 → 3) bought **+0.067 LB for +0.020 CV**. CV understates the leaderboard because CV is
+scored against noisy report-derived labels while the LB is scored against real ground truth — so
+**CV gains are a lower bound, not a forecast.**
+| 6 | **ours16** 16 members (5 small s1 + 5 base + 5 small s2 + 1 gattn) | — | **0.864** |
+| 7 | **mix35** ours 15 (60%) + 20 public 12-slice | — | 0.861 |
+| 8 | pseudo-labels round 1 (other session) | +0.0111 | 0.857 |
 
-What this does and does not license:
+**Ensemble breadth is exhausted:** 5 members 0.864, 16 members 0.864, 35 members 0.861.
 
-- ✅ **CV predicts LB at coarse resolution.** Both land at ~0.78. Grouped CV is not lying to us,
-  and it is still the right instrument for deciding whether something works.
-- ❌ **CV cannot resolve differences of ~0.005 or less.** Neither can a single LB score. Anything
-  in that band is noise in *both* instruments, so "CV improved by 0.002" means nothing.
-- ❌ **Do not convert CV to an expected LB rank using a fixed offset.** An earlier version of this
-  file did exactly that off n=1; with n=2 the offsets differ by a factor of two.
+**The CV↔LB offset is stable**, which is what makes CV usable for ranking experiments:
 
-**Planning consequence:** only pursue changes plausibly worth **≫0.01**. At 30 h GPU/week, a 4-epoch
-run costs ~1/8 of the budget, and a change worth 0.002 is indistinguishable from doing nothing —
-which is precisely what the 160 mm crop turned out to be. It is now **confirmed dead**: better CV,
-worse LB, no effect.
+| CV | LB | offset |
+|---|---|---|
+| 0.7949 | 0.850 | +0.055 |
+| ~0.805 | 0.856 | +0.051 |
+| 0.8185 | 0.864 | +0.046 |
 
-**The LB came in +0.008 above CV** on the first submission. That settled a question this file
-previously listed as open.
-The earlier reasoning went: our CV might badly *understate* us, because (a) it scores against noisy
-report-derived labels, and (b) it holds out entire scanner sites while the hidden test may not.
-Either effect would have put the LB well above 0.7746. **Neither did. That hypothesis is dead.**
+It is drifting *down* slightly as CV rises — consistent with CV approaching the quality ceiling of
+the labels it is scored against. Do not extrapolate it past ~0.83 CV without a fresh calibration
+point.
 
-Two consequences, and the second is unwelcome:
+### The current architecture (replaces everything in sessions 9–12)
 
-1. **Site-grouped CV predicts the leaderboard almost exactly.** We can iterate against CV and trust
-   it, without spending submission slots to find out. This is worth a lot — 5 slots/day, and the
-   grouping discipline in §"Discipline" is what earned it.
-2. **We are genuinely ~0.16 behind.** Top 0.942, 20th 0.919, us 0.783 (1,018 teams). This is a
-   capability deficit, not a measurement artifact. Do not soften this.
-
-Read alongside the `knee-train-8ep` result above — more epochs bought nothing and began overfitting
-— both findings point away from the training loop and at the labels. That is the project's existing
-thesis, now supported by evidence rather than inference.
-
-⚠️ **But calibrate expectations about labels too.** Ensemble labels are +0.067 *on label quality vs
-gold*, and label quality does not translate 1:1 into imaging AUC (the model already partly sees
-through the noise). **Better labels alone will not close 0.16.** Something beyond the current
-recipe — more slices/resolution, multi-fold ensembling, a stronger backbone, or an approach we have
-not tried — is needed to be competitive. Treat the ensemble retrain as the next step, not the plan.
-
-Entry deadline 2026-10-15 is the real clock. Note only **2 submissions count** toward the final
-leaderboard score (Kaggle auto-selects the best if fewer are chosen).
-
-**Best available labels are now the ENSEMBLE at 0.8234** (rule + LLM mean), not the 0.757 rule-only
-`labels_v1.csv` that `knee-model-v1` was trained on. Retraining against ensemble labels is the
-highest-value pending change — session 11 showed label noise, not capacity, is the binding
-constraint.
+- **Six slots** = plane × acquisition weighting (`SAG/COR/AX_FLUID_FS`, `SAG_FLUID_NOFS`,
+  `COR_T1`, `SAG_T1`), with a **presence mask** so a missing slot is attention-masked rather than
+  fed as zeros. Replaces the old three-plane fluid-sensitive-only view, which discarded T1
+  entirely — and the OA labels read on the structural sequences.
+- **Laterality normalisation.** Five of twelve targets are side-specific; left and right knees are
+  mirror images, so without this the model learns a direction that flips at random across ~42% of
+  the macro metric.
+- **DINOv2-small** encoder, 384 hidden, last 6 of 12 blocks unfrozen, 11.7 M trainable,
+  `cls_mean_focal` pooling; `XAttnHead` cross-attention with `SLOT_PRIOR_STRENGTH = 0.55`.
+- **Cache** `(4407, 6, S, 336, 336)` uint8 at 130 mm/336 px = 0.387 mm/px. 6 slices = 16.68 GB,
+  12 slices = 33.36 GB.
+- **TPU v5e-8**, not T4 — a 5-fold 10-epoch run is ~1 h 12 m.
 
 ### What runs today
 
 ```bash
 python scripts/extract_labels.py --evaluate        # rule extractor vs the 58 gold studies
-python -m pytest tests/ -q                          # 60 tests
-kaggle kernels push -p . --accelerator NvidiaTeslaT4
+python -m pytest tests/ -q                          # 60 tests (old pipeline only — see gap below)
+kaggle kernels push -p notebooks/kaggle/<name>      # accelerator comes from kernel-metadata.json
 ```
+
+**Tests: 137 passing + 4 xfailed** (was 60). `tests/test_slots.py` closed the coverage gap on the
+slot pipeline — `SLOTS` ordering is now pinned, the laterality mirror is asserted per plane
+(sagittal reverses slice order, coronal/axial flip the frame, and the two must not agree), and both
+heads are checked so a masked slot provably cannot move a logit.
+
+> ⚠️ **Writing those tests found a live bug in `classify_weighting` — see "The T1 underscore bug"
+> below.** It is recorded as a `strict=True` xfail rather than patched, because the fix changes slot
+> routing and therefore invalidates every published cache.
 
 ## Older next-actions (Phase 1 text extraction — superseded by the imaging work above)
 
@@ -858,18 +828,281 @@ silently and looks like an empty run.
 submission path can be proven end to end **before** the model exists. Worth doing first — it
 converts "does our notebook even produce a scoreable file" from an unknown into a settled question.
 
-## Immediate next steps (after session 11)
+## Immediate next steps (after session 18)
 
-1. **Train longer.** 4 epochs was not convergence — loss and AUC were both still improving. 8–10
-   epochs on fold 0 is the cheapest gain available and needs no code change beyond `EPOCHS`.
-2. **Run the remaining folds** only once epoch count is settled; 5 folds × 4 h is most of a weekly
-   quota, so don't spend it on a configuration still being tuned.
-3. **Submit.** `knee-model-v1` is published and `kaggle_03_submit.py` already resolves checkpoints
-   from it. The submission path is proven end to end (session 10), so this is now low-risk.
-4. **Then** improve labels, not the model. Synovitis scoring 0.836 from images while its text
-   labels sit at 0.630 is direct evidence that **label noise is the binding constraint** — which is
-   what the LLM extractor (Phase 1 step 2) exists to fix, and what the rules change now permits
-   more options for.
+1. **Build the fat-suppression cache at 336 px and validate on fold 0.** This is now the only
+   unmeasured lever with a measured mechanism behind it: 255 studies (5.79%) change slot
+   assignment, concentrated on `AX_FLUID_FS`, which is a prior slot for PF OA (0.755, weak).
+   Build at **336, not 448** — see the null below.
+2. **Resolution is a null under `xattn` too — RESOLVED 2026-08-14.** `knee-train-448x6` fold 0
+   scored **0.8218 vs the 336 px baseline's 0.8207: +0.0011**, inside the 0.0020 noise floor. The
+   checkpoint confirms a clean comparison (`size=448`, `head=xattn`, `slices_per_slot=6`,
+   `variant=small`, `labels=labels_blend_v1.csv`, `n_groups=151`) — only the pixel scale differed.
+   **The hypothesis that the pooling bottleneck caused the original 448 null is not supported.**
+   It cost ~1.78x the encoder compute for nothing.
+3. **This also weakens the case for re-testing DINOv2-base under `xattn`.** That re-test rested on
+   the same reasoning — "the null was measured on the pooled head, so it does not count" — and the
+   reasoning has now failed its first test. Not disproven, but no longer worth quota ahead of the
+   fat-suppression rebuild.
+4. **Stop scaling slices** — 12 slices/slot scored 0.8161 vs 6 slices' 0.8207, both under `xattn`.
+
+### PSEUDO-LABELS PAY: fold 0 0.8257 vs 0.8207 (+0.0050) — 2026-08-17
+
+**The first non-null lever since the pipeline rebuild**, and it is the one aimed at the label
+ceiling rather than at the model.
+
+`labels_pseudo_a70.csv` = `0.7 x labels_blend_v1 + 0.3 x OOF`, where the OOF predictions are the
+complete 5-fold out-of-fold output of `knee-train-base-6slice` (4,349 studies, 5 non-overlapping
+folds, no study predicted by a model that trained on it). Single global alpha, **no per-label
+weighting** — choosing which labels to trust from 58 gold studies is the overfitting this project
+already refuses for per-label selection.
+
++0.0050 is 2.5x the 0.0020 noise floor, against a 336x6 small/xattn baseline of 0.8207.
+
+**The comparison is only valid because the yardstick was pinned.** `valid_y` originally came from
+the same label file as training, so a naive run would have validated pseudo-label training against
+pseudo-labels — CV would have risen because the model was scored against targets it had been fitted
+to, and the number would have looked like a win while meaning nothing.
+`knee-train-pseudo-f0` trains on `labels_pseudo_a70` and validates on `labels_blend_v1`, logging
+both paths so the split is visible in the run.
+
+#### The alpha sweep (fold 0, all against the fixed `labels_blend_v1` yardstick)
+
+| α (weight on text) | Fold 0 CV | vs baseline |
+|---|---|---|
+| 1.00 — pure text, baseline | 0.8207 | — |
+| 0.85 | 0.8195 | −0.0012 |
+| 0.70 | 0.8257 | +0.0050 |
+| 0.50 | 0.8291 | +0.0084 |
+| 0.30 | 0.8299 | +0.0092 |
+
+**This is a threshold-and-plateau, not a monotonic response** — a correction to how it was first
+described here off two points. Light blending (α=0.85) does nothing measurable, sitting a hair below
+baseline inside the noise floor. The gain appears past ~0.7 and saturates by ~0.3: the 0.5 → 0.3 step
+buys +0.0008, which is noise.
+
+**Production choice: α = 0.5.** Statistically tied with 0.3, and it keeps more weight on the
+external text signal, which is the conservative side of the trade against the model drifting toward
+its own predictions. α=0.15 was not run — the plateau already answers the question, and TPU time is
+better spent on folds that produce a submission.
+
+**What is NOT yet established:**
+
+- **n = 1 fold, 1 seed.** +0.0050 clears the noise floor but one fold is one fold.
+- **Alpha is untuned.** 0.7 was chosen as a conservative default, not measured. Whether the effect
+  grows or reverses at 0.5 is unknown, and a monotonic response across alpha would be much stronger
+  evidence than a single point.
+- **Iterating is not obviously safe.** Round two would blend in OOF from a model already trained on
+  pseudo-labels, which risks self-confirmation: the model agrees with targets it helped write. If it
+  is iterated, the gold-58 report and the fixed yardstick both have to stay in place.
+- Gold-58 was unchanged (0.8930 → 0.8930), as expected — n=58 cannot resolve ~0.005.
+
+### The pattern across every measured lever
+
+| Lever | Category | Result |
+|---|---|---|
+| Laterality normalisation, slot routing, crop geometry | **what the model sees** | large gains |
+| Slice count 6 → 12 | how much it sees | −0.0046 |
+| Resolution 336 → 448 (pooled head) | how finely it sees | −0.0014 |
+| Resolution 336 → 448 (**xattn**) | how finely it sees | **+0.0011** |
+| Encoder small → base (pooled head) | how much model | −0.0005 |
+| Fat-suppression routing (255 studies, 5.79%) | what it sees | ~null across folds |
+| **Pseudo-labels, α=0.7** | **label quality** | **+0.0050** |
+
+**Changing *which* acquisition and *which* anatomical position reaches the model pays. Changing how
+much or how finely it is rendered does not.** Four independent measurements now agree. This is the
+single most useful generalisation the project has, and it points directly at the fat-suppression
+fix, which changes *which* series fills a slot.
+
+5. **The old point 2, retained because the reasoning still holds:**
+   - 12 slices/slot scored **0.8161 on fold 0 vs 6 slices' 0.8207** — slightly *worse*, for 2× the
+     cache RAM (33.36 GB vs 16.68 GB) and a longer run. Coverage saturated between 6 and 12.
+   - DINOv2-small → base is a null (see the decision log). Independently corroborated on the forum
+     at +0.0011 against a measured 0.0020 noise floor.
+   The pattern across both: **how the pixels are prepared pays; how much model is pointed at them
+   does not.** Crop geometry and slice *position* were the wins; slice *count* and parameter count
+   were not.
+3. **Select the two final submissions.** 0/2 are currently selected, so Kaggle will auto-pick the
+   two best public scores. Public LB is only ~30% of the test set — auto-selection optimises the
+   number most likely to be noise-inflated. Decide deliberately once slot-v3 lands.
+4. **Put tests on the slot code before changing it further.** It has none, and `SLOTS` ordering
+   silently invalidates caches (see the test-coverage gap above).
+
+### The T1 underscore bug — MEASURED 2026-08-14, verdict: **do not fix**
+
+`knee-t1-scan` (CPU, 11 min, one header per series across all 24,371) settled it. The bug is
+completely real and completely immaterial:
+
+| | |
+|---|---|
+| Series whose weighting flips under the fix | **32 of 24,371 (0.13%)** |
+| Studies gaining a T1 slot | **23 of 4,407 (0.52%)** — 23 COR_T1, 4 SAG_T1, 0 lost |
+| Mean slots per study | 4.482 → 4.487 |
+
+Not worth invalidating every published cache and retraining 5 folds. **Closed.** The xfail in
+`tests/test_slots.py` stays as documentation of a known, deliberately-unfixed defect.
+
+**Why so few, when 42.5% of series are structural:** `classify_weighting` falls through to the
+TR/TE branch, and T1 sequences genuinely have short TR *and* short TE. Physics rescues nearly every
+series the regex misses. The bug only surfaces where TR/TE are absent or ambiguous. Worth
+remembering as a general shape: a redundant fallback can mask a real defect almost entirely, which
+is exactly why prevalence had to be measured rather than reasoned about.
+
+#### Two things the scan found that matter more than the bug it was built for
+
+1. **The same underscore flaw is in the STIR guard, and it bites the other way.** Two flipped
+   series were `t1_tirm_cor` / `t1_tirm_tra`. TIRM is STIR-family, i.e. genuinely fluid-sensitive,
+   and the guard meant to catch that — `\bstir\b|\btirm\b|\bspair\b` — fails on `stir_sag`,
+   `t1_tirm_cor` and `t2_spair_ax` for the identical reason. **The proposed T1-only fix would
+   therefore have been a regression**, routing a fluid-sensitive TIRM into a T1 slot. Caught only
+   by printing the actual flipped strings; the counts alone said "harmless but positive". Any
+   future fix must correct both patterns together.
+2. **`Fluid_Sensitive` is misnamed: the column actually encodes FAT SUPPRESSION.** See below — this
+   turned out to be the most valuable thing the scan produced.
+
+### `Fluid_Sensitive` does not mean fluid-sensitive (RESOLVED 2026-08-14)
+
+The scan first looked like it had found a 20% correctness problem: 4,560 of 24,371 series that the
+CSV marks `Fluid_Sensitive = 0` are classified fluid-sensitive from their headers. Reading the
+descriptions settled it immediately — they are `PDW_TSE_Sag`, `pd_tse_tra_d`, `t2_tse_sag_d`,
+`Sag T2 FSE`, `SAG DP` (French *densité de protons*). **T2 and PD are fluid-sensitive by
+definition.** 2,361 of the disagreements contain a PD/proton token and 1,586 contain `t2`; only 35
+contain `t1`.
+
+`docs/03-data-guide.md` already records that `Fluid_Sensitive` and `Fat_Suppression` are identical
+in all 24,371 rows, so between them they carry one bit. **This identifies which bit:**
+
+| The CSV flag vs the header-derived value | Agreement |
+|---|---|
+| as **fluid-sensitivity** | 80.19% |
+| as **fat-suppression** | **97.31%** |
+
+So the header classifier was right all along and slot routing has no correctness problem here. The
+`slots.py` decision to derive weighting from headers rather than the CSV — "the CSV flags cannot do
+the routing" — is now vindicated with a number rather than an argument. **Anyone using
+`Fluid_Sensitive` as a fluid-sensitivity signal misroutes ~4,560 T2/PD series.**
+
+#### The upside: a free, better fat-suppression label
+
+The flag is a *reliable fat-suppression* label for all 24,371 series, available from the CSV with no
+header read. The 592 series where the CSV says fat-suppressed and `_FATSAT_RX` disagrees are regex
+misses, and the CSV is right in every sampled case. Three distinct causes:
+
+| Cause | Examples | ~n |
+|---|---|---|
+| **The same underscore bug** — `\bfs\b`, `\bstir\b`, `\btirm\b` can't match between underscores | `STIR_aTSE_TR_16`, `t2_tirm_tra`, `t2_tse_fs_sag` | ~121 |
+| Missing vocabulary | `t2_de3d_we_tra…` (`we` = water excitation), `SMART FAT FSEfw` (Philips) | ~333 |
+| No fat-sat token in the text at all, but `ScanningSequence` says `IR` | `ROUTINE Fse ['SE','IR']`, `AXI DER` | ~63 |
+
+**This is 18× the T1 bug (592 series vs 32)** and it sits on the axis that separates `SAG_FLUID_FS`
+from `SAG_FLUID_NOFS`. Reading `Fat_Suppression` from the CSV fixes all three causes at once and
+deletes the regex from the routing path.
+
+#### MEASURED 2026-08-14 by `knee-fatsat-scan`: **11x the T1 bug — worth doing**
+
+| | T1 underscore (closed) | Fat-suppression |
+|---|---|---|
+| Series changed | 32 (0.13%) | **656 (2.69%)** |
+| Studies affected | 23 (0.52%) | **255 (5.79%)** |
+
+656 = 592 the regex missed plus 64 the reverse. **484 of the 656 are Axial**, and the slot table
+shows why that matters:
+
+| Slot | Filled now → fixed | gained | lost | swapped |
+|---|---|---|---|---|
+| **AX_FLUID_FS** | 90.38% → **94.26%** | **171** | 0 | 16 |
+| SAG_FLUID_FS | 93.24% → 94.17% | 45 | 4 | 16 |
+| COR_FLUID_FS | 95.55% → 96.39% | 40 | 3 | 5 |
+| SAG_FLUID_NOFS | 57.86% → 57.48% | 15 | 32 | 26 |
+| COR_T1 / SAG_T1 | unchanged | 0 | 0 | 0 |
+
+The `SAG_FLUID_NOFS` net *loss* is the fix working, not a regression: series correctly reclassified
+as fat-suppressed leave the NOFS slot for the FS slot. `COR_T1`/`SAG_T1` are untouched because
+`want_fatsat` is `None` there — a good sanity check that the change is confined to the axis it
+should be.
+
+**The axial gain is the interesting part.** `SLOT_PRIOR_TABLE` makes `AX_FLUID_FS` (slot 2) a
+preferred slot for **PF OA, Effusion, Synovitis, Contusion and Fracture** — and PF OA is one of the
+weak labels (0.755). The single biggest contributor is `t2_de3d_we_tra_Patella_fit_T` (258 series),
+a **patella-specific axial water-excitation sequence**: exactly the acquisition PF OA is read on,
+invisible to the regex because `water[ _-]?excit` does not match the `we` abbreviation. Others:
+`STIR_aTSE_*` (49), `t2_tirm_tra` (63), `SMART FAT FSEfw` (75), `AXI DER`/`AXI IZQ` (27).
+
+**Prediction that was wrong, recorded so it is not repeated:** presence changes were expected to be
+the minor effect and identity changes the dominant one. It is the other way round — 232 studies
+(5.26%) change a slot's presence versus 62 (1.41%) its identity. Many studies had *no* recognised
+axial fat-sat series at all, so the slot was empty rather than wrongly filled.
+
+**Sequencing — do not rebuild the cache twice.** Land the 448 fold-0 number first, then build one
+cache at the winning resolution *with* the fat-sat fix and validate it on fold 0 against that
+resolution's own baseline. Bundling both changes into one run would confound them; rebuilding twice
+wastes a full cache build.
+
+**Still unmeasured: the AUC effect.** 5.79% of studies gaining or changing one slot out of ~4.5
+filled is a modest perturbation, and slot fill is not score. The honest test is a fold-0 retrain.
+
+### (historical) The T1 underscore bug as first characterised
+
+`_T1_RX` in `src/data/slots.py` matches with `\b`. **Underscore is a word character** in Python
+regex (`\w == [A-Za-z0-9_]`), so `\bt1w\b` cannot match `t1w_sag` — there is no boundary between
+`w` and `_`. Demonstrated, not inferred:
+
+| Series text | T1 matched | Classified |
+|---|---|---|
+| `T1`, `T1W`, `t1w sag`, `COR T1W`, `T1-weighted`, `T1W/SE` | ✅ | structural — correct |
+| `t1w_sag`, `T1W_TSE`, `t1_tse_sag`, `SAG_T1W_TSE` | ❌ | **fluid-sensitive — wrong** |
+
+Underscore-separated descriptions are the Siemens house style, so this is not a hypothetical
+spelling. The same flaw sits in the `\bt1[ _-]?tse\b` branch, which handles an *internal* underscore
+but still breaks on a trailing one.
+
+**Why it matters.** A misclassified T1 series is routed into a *fluid* slot, so `COR_T1`/`SAG_T1`
+are left empty and masked out — and those slots exist precisely because cartilage thinning and
+marrow signal, i.e. **the three OA labels**, read on the structural sequences. Worse, the structural
+series then competes for a fluid slot on "most files wins" and can displace a genuine one.
+
+**Population at risk, from `train_series.csv`:** 10,361 of 24,371 series (42.5%) are structural,
+spread across **all 4,407 studies**; 9,182 of those are sagittal or coronal, i.e. `SAG_T1`/`COR_T1`
+candidates.
+
+**Prevalence is unmeasured** and cannot be measured locally — series text lives in the DICOM headers
+(`SeriesDescription`, `SequenceName`, `ScanOptions`, `ScanningSequence`), which are Kaggle-only.
+**Measure before fixing**: one cheap header-scan notebook counting how many structural series carry
+an underscore-separated T1 name turns this from "real by construction" into a sized defect. That
+number decides whether it is worth the cost below.
+
+**Why it was not just patched.** `classify_weighting` feeds `src/data/cache.py`. Changing it changes
+slot routing, so every published cache is invalidated and any new run is not comparable with the
+checkpoints behind LB 0.856 — a rebuild-and-retrain, not a one-line fix. It is a `strict=True` xfail
+in `tests/test_slots.py`, so whoever fixes the regex is forced to notice and remove the marker.
+
+### Open, worth a decision rather than a default
+
+- **DINOv2-base has never been re-tested under `xattn`** — see below; the existing null used the
+  pooled head.
+- **Encoder scaling has never been re-tested under `xattn`.** `knee-train-slots-tpu-base` calls
+  `SlotNet(...)` with no `head=` argument, so it used the pooled head. Same for the 448 run. Both
+  nulls predate the architecture change, and `XAttnHead`'s own docstring names that pooling as the
+  cause. 448 is being re-tested now; base is not, and remains genuinely open despite the forum's
+  independent null (which was also measured on a pooled architecture).
+
+- **Menisci remain the weak labels** (Lateral 0.777, ACL 0.742, MCL 0.747 at 12-slice epoch 9).
+  These are the focal, few-slice findings the domain primer predicted would be hardest. More slices
+  did *not* fix it, which points at resolution or slice *placement*, not coverage.
+- **Public/private split geometry is unknown** — forum thread open on whether the split is
+  site-stratified or holds entire sites out. If entire sites are held out, site-grouped CV is the
+  right proxy and the CV↔LB gap is explained; if not, the gap is label noise. This changes how much
+  to trust CV.
+
+> **Trap, if any encoder swap is ever attempted: a checkpoint carries its own preprocessing
+> contract.** `src/model/net.py` registers the ImageNet `mean`/`std` as fixed buffers. That is
+> correct for DINOv2 and *wrong* for any checkpoint pretrained on different statistics — a team on
+> the forum lost an 11-hour RAD-DINO run to exactly this. It fails silently: no error, no warning,
+> just a plausible curve pointing the wrong way, supporting a false conclusion about the hypothesis
+> you most wanted to test. Read `image_mean`/`image_std` from the checkpoint's
+> `preprocessor_config.json` rather than assuming them. Related: any run that does not **print which
+> backbone it loaded** is not evidence about that backbone — a failed weights lookup can fall back
+> to a different architecture that trains fine and logs a plausible score.
 
 ## Older: immediate next step (session 9 starting point)
 
@@ -1078,9 +1311,11 @@ negation fixes actually resolved it, rather than being adjusted to match wrong b
 |---|---|---|
 | Not joined / no Kaggle API token | **Resolved 2026-08-08** | Token lives in `~/.kaggle/access_token`, not `kaggle.json` |
 | 570 GB dataset vs 182 GB free disk | **Permanent constraint** | Never download DICOMs locally. Work in Kaggle notebooks. |
-| No local NVIDIA GPU | **Permanent constraint** | All training on Kaggle (~30 GPU-h/week) or other cloud |
-| Commercial LLM API on report text — allowed? | **Open, no host ruling** | Assume **not** allowed. Build on open weights. |
-| External datasets (MRNet, OAI, fastMRI+) eligible? | **Open, no host ruling** | Don't design around them yet |
+| No local NVIDIA GPU | **Permanent constraint** | All training on Kaggle. Now **TPU v5e-8**, not T4 |
+| Commercial LLM API on report text — allowed? | **Resolved 2026-08-08** | Host announcement: **permitted**. Open weights stayed the choice anyway — free, offline, and it sidesteps the "minimal cost / reasonably accessible" test the host may apply after the fact. This row previously still said "assume not allowed", contradicting session 9 |
+| External datasets (MRNet, OAI, fastMRI+) eligible? | **Open, no host ruling** | Don't design around them yet. Open forum thread on the gated KneeCoT dataset specifically |
+| Pretrained-weight licence vs winners' open-licence obligation | **Open, watch it** | Forum thread on whether CC-BY-NC weights are compatible. DINOv2 is Apache-2.0, so the current pipeline is clear — but this constrains any future encoder swap |
+| Windows 260-char path limit breaks local `pip install torch` | **Worked around** | Venv lives at `C:\rsna-venv`, outside the project tree |
 
 ## Decision log
 
@@ -1098,10 +1333,57 @@ Decisions made and why, so we don't relitigate them. Append, don't rewrite.
 | 2026-08-08 | Pattern sets are **unioned across languages**, not dispatched by detected language | Radiology vocabulary rarely collides across languages, and a union beats a language detector that is wrong 5% of the time |
 | 2026-08-08 | Extract **10 concepts**, not 12 labels; laterality splits meniscus and tibiofemoral OA | Reports describe one structure qualified by side, so this matches how the text is actually written |
 | 2026-08-08 | Unresolved laterality **drops** the mention (configurable) | Conservative default. `--unresolved-laterality both` is the alternative; which is better is an empirical question for the gold set |
+| 2026-08-12 | Replace the three-plane view with **six laterality-normalised slots** | Three planes discarded T1 entirely, and OA reads on structural sequences; five of twelve targets are side-specific, so an unnormalised side is a random direction across ~42% of the metric |
+| 2026-08-12 | Move training to **TPU v5e-8** | A 5-fold 10-epoch run is ~1 h 12 m; the T4 could not fit the schedule inside the weekly quota |
+| 2026-08-13 | Build a **persistent slot cache** rather than decoding per run | Reverses the session-10 "no cache needed" call, which was correct for one 4-epoch fold and wrong for 5 folds × 10 epochs — decode dominates once runs repeat |
+| 2026-08-14 | **Stop scaling the encoder.** DINOv2-small is the production encoder | small → base measured a null here, and the forum reports +0.0011 against a 0.0020 noise floor. 4× the parameters for nothing measurable |
+| 2026-08-14 | **Stop scaling slice count at 6/slot** | 12 slices scored 0.8161 on fold 0 vs 6 slices' 0.8207 — worse, at 2× the cache RAM. Coverage saturated |
+| 2026-08-14 | **Push to git every session**; Kaggle is not the source of truth | 4 days and an entire pipeline rebuild existed only as Kaggle notebooks. A deleted kernel would have been unrecoverable work |
+| 2026-08-14 | **336 px is the production resolution. Stop testing resolution** | 448 under `xattn` measured +0.0011 against a 0.0020 noise floor, for 1.78x the compute. Both the pooled-head and `xattn` tests now agree |
+| 2026-08-14 | **Every checkpoint must carry its own config** (`size`, `head`, `variant`, `pool`, `score`, `labels`) | Kaggle logs came back 0 bytes for the third time. The 448 result was recoverable *only* because the checkpoint records `size=448` and `score`. A run whose configuration lives solely in its log is a run that can evaporate |
+| 2026-08-14 | Prefer routing fixes over capacity/resolution/coverage increases | Four independent measurements: changing *which* acquisition reaches the model pays, changing how much or how finely it is rendered does not |
 
 ## Session log
 
 Newest first. One short entry per session: what changed, what was learned.
+
+### 2026-08-14 — Session 18 (repo resynced from Kaggle; two nulls recorded)
+
+- **Found the repo 4 days behind reality.** `main` ended at the 2026-08-10 handover while Kaggle
+  held 52 notebooks, five submissions and a completely rebuilt pipeline. Pulled all 28 `knee-*`
+  kernels into `notebooks/kaggle/` and resynced `src/` from the `knee-src` dataset.
+- **`src/` had drifted in five files**, not one: `data/dicom.py` (+`physical_crop`, `FOV_MM`),
+  `model/net.py` (+`DinoEncoder`), and three modules that existed *only* on Kaggle —
+  `data/slots.py`, `data/cache.py`, `model/slotnet.py`. The notebooks import
+  `from src.data.slots import GROUP`, so the committed repo could not have run them. 60 tests still
+  pass after the sync.
+- **Two levers measured as nulls this session** (both now in the decision log): 12 slices/slot
+  (0.8161 vs 6-slice 0.8207 on fold 0) and encoder scaling. Neither is worth further quota.
+- Audited everything before pushing to this **public** repo: 28 `.py` + 28 metadata files, 608 KB,
+  no secrets, and every `labels_blend_v1.csv` hit is a filename constant rather than data. No
+  competition-derived labels are committed — that would be prohibited sharing.
+- Local environment note: the Windows 260-char path limit breaks `pip install torch` inside the
+  project tree. The working venv lives at `C:\rsna-venv`, outside it.
+- **Added `tests/test_slots.py` — 60 tests → 137 passing + 4 xfailed.** Covers the frozen `SLOTS`
+  order, the geometry constants (336 px is patch-14 clean, 130 mm/336 px = 0.387 mm/px), the
+  per-plane laterality mirror and its involution, the "centre not corner" side read, sequence
+  weighting, slot routing (including that `COR_T1` is never faked from a fluid coronal), frame
+  preparation, and both heads — the important one being that a masked slot provably cannot change a
+  logit, plus its converse so an all-masking bug can't pass trivially.
+- **Writing them found the T1 underscore bug**, then `knee-t1-scan` measured it and **closed it as
+  immaterial** (23 studies, 0.52%). The scan's real value was two by-products: the identical flaw in
+  the STIR guard, which would have made the "obvious" fix a regression, and the unexplained 20%
+  disagreement with the host's `Fluid_Sensitive` flag. Both are recorded above.
+- **slot-v3 scored LB 0.864**, a new best, and the CV↔LB offset held at +0.046. CV remains usable
+  for ranking experiments.
+- **Found that the 448 and DINOv2-base nulls were both measured on the pooled head**, not `xattn` —
+  neither notebook passes `head=`. 448 is being re-tested; base is now genuinely open again.
+- Cross-family ensembling (slot-v2 + slot-v3) was considered and **rejected on cost**: the two
+  families run on different test caches (3-slice vs 6-slice) and `band_indices` does not make the 3
+  a subset of the 6, so it needs two cache builds. One build already consumes ~6.5 h of the 9 h cap.
+- **`knee-submit-6slice.log` came back 0 bytes** — the same failure recorded in session 13. Kaggle
+  does not expose logs for submission reruns, so the cache-build/inference split of that 6.5 h is
+  not observable. Treat submission-rerun timing as unmeasurable and budget conservatively.
 
 ### 2026-08-08 — Session 8 (LLM extractor built, first full run interrupted)
 - Built `src/extract/llm.py` + `scripts/extract_labels_llm.py`: local-Ollama LLM extractor,
@@ -1181,3 +1463,120 @@ Newest first. One short entry per session: what changed, what was learned.
 At the end of a session, edit three things: *Where we are right now*, *The next three actions*, and
 add a **Session log** entry at the top of that list. Add to the decision log only when a real choice
 was made. Change *Last updated*. Commit and push — that's what makes it available from anywhere.
+
+### Pseudo-labels round 1 REGRESSED on LB — 2026-08-19
+
+slot-v5 (5-fold, alpha=0.5 pseudo-labels): CV 0.8296 (+0.0111 over slot-v3's 0.8185) but
+**LB 0.857, down from slot-v3's 0.864.** The CV gain did not transfer — it likely reflects the model
+agreeing with its own family's blind spots (pseudo-labels came from knee-train-base-6slice's OOF,
+same architecture/pipeline as what CV validates against) rather than genuine label-quality
+improvement. **Round 2 (blending in yet more of the model's own predictions) is not being pursued** —
+it would very likely compound this failure mode rather than fix it.
+
+Also 2026-08-19: `ours16` (16-member: 5 small seed1 + 5 base + 5 small seed2 + 1 gattn head) scored
+LB 0.864, tying slot-v3. Built in a parallel session — includes a `gattn` (group-attention) head
+variant not present in this repo's `src/model/slotnet.py`. Worth reconciling before further work:
+check `knee-train-gattn` on Kaggle and pull its source if it's a real architectural addition.
+
+**Lesson for any future label-quality attempt:** validate the CV gain is not circular BEFORE
+trusting it — e.g. check whether the OOF source model and the model being validated share
+correlated errors (same slots, same cache, same architecture family), not just that the yardstick
+label file is fixed. A fixed yardstick guards against training/validation using the same file; it
+does not guard against the validation target being *derived from* a sibling model.
+
+### Diagnosis: why pseudo-labels regressed — 2026-08-19
+
+Round-1 model's own per-label OOF AUC (against the yardstick): MCL 0.754 (weakest), Lateral
+Meniscus 0.776, PF OA 0.793, Lateral OA 0.806 — vs 0.84-0.87 for the rest. These are exactly the
+labels already flagged as least trustworthy: MCL is where rule vs LLM text extraction disagree by
+-0.204 (the most contested label in the whole extraction pipeline), and menisci/OA are the
+historically weak imaging labels.
+
+**Mechanism:** blending 50% of the base model's own OOF into the training target means that on
+labels where imaging has never been reliable, the model trains against a target that is half its
+own family's noisy guess on precisely its hardest labels. Fixed-yardstick CV doesn't catch this
+because the yardstick itself (labels_blend_v1) is also weakest on these same labels — the
+architecture family's blind spot is shared with what validates it. The hidden LB, scored against
+real ground truth, is not fooled.
+
+**Implication for any future attempt:** do not blend uniformly across all 12 labels. Restrict
+pseudo-label blending to labels with demonstrated agreement between text and imaging (e.g.
+Synovitis, where imaging beat text by a wide margin) and leave contested labels (MCL, menisci, OA)
+on text-only labels.
+
+---
+
+## HANDOVER — 2026-08-19 (session end)
+
+### Standing result
+
+**Best LB = 0.864**, reached two independent ways:
+
+| Score | Ref | What |
+|---|---|---|
+| 0.864 | 55503594 | `slot-v3` — 5-fold small, xattn, 6-slice, blend labels |
+| 0.864 | 55619346 | `ours16` — 16 members (5 small s1 + 5 base + 5 small s2 + 1 gattn) |
+| 0.861 | 55578383 | `mix35` — 15 ours + 20 public 12-slice |
+| 0.857 | 55605646 | `slot-v5` — pseudo-labels round 1 (REGRESSION) |
+
+**Final-submission advice: select `slot-v3` + `ours16`.** Same score, genuinely different
+architectures — the only free protection against private-LB variance. Do NOT select `slot-v5`.
+
+### Blocked
+
+**Both weekly quotas exhausted: TPU 20 h, GPU 30 h.** `knee-train-pseudo-sel` v3/v4 showing
+`CANCEL` was quota, not a code fault. Nothing can train until the weekly reset.
+
+### Queued and ready — run this first when quota returns
+
+`notebooks/kaggle/knee-train-6slice-24ep/` — **built, compiled, committed, never run.**
+
+The exact `slot-v3` recipe (same cache, same blend labels, same xattn head, same folds) with
+`EPOCHS` 10 → 24 and nothing else changed. Also forces `XLA=False` because it targets T4, and the
+T4 image bundles `torch_xla` such that the inherited auto-detect block returns a fake CPU-XLA
+device instead of the GPU.
+
+**Why this is the best-evidenced next move:** 8 of 10 checkpoints across the two most recent 5-fold
+runs peaked at **epoch 9 of 10 — the last epoch** — across both label sets and both encoder sizes.
+Every model in this project is undertrained. Session 11 recorded "more epochs is the cheapest
+available gain" and it was never applied to the current 6-slice/xattn recipe; the 20-epoch runs
+that exist (`knee-train-xattn-20ep`, `knee-train-slots-tpu-20ep`) are from 2026-08-13 on the older
+3-slice config.
+
+### Closed — do not re-attempt without new information
+
+- **Ensembling has saturated.** slot-v3 (5 members) = ours16 (16 members) = 0.864. mix35 (35
+  members) = 0.861, i.e. *worse*. Confirmed independently on OOF: base-only 0.8097, pseudo-only
+  0.8288, and every weighted blend of the two scored **below pseudo alone**.
+- **Pseudo-labels (uniform blend).** +0.0111 CV, −0.007 LB. Traced to the four labels where imaging
+  and text disagree most (MCL 0.737, Lateral Meniscus 0.764, PF OA 0.765, Lateral OA 0.779 —
+  imaging-OOF vs text agreement). Selective blend (`labels_pseudo_sel_a5.csv`, text-only on those
+  four) is generated and uploaded but **never validated** — its fold-0 gate never ran.
+- **Capacity/resolution/coverage/routing:** six levers, six nulls (slices 6→12, 336→448 under both
+  heads, small→base, fat-sup routing).
+
+### The standing ceiling
+
+Labels score **0.8930 vs gold**. That is the measured ceiling of the whole pipeline. Top of
+leaderboard is 0.946; 0.864 is not a tuning gap away from it.
+
+**The one large unexploited lever:** the host permitted commercial LLMs on 2026-08-08 (session 9).
+Label quality went rule 0.757 → local-LLM 0.781 → blend 0.8930, all from a small local model. A
+frontier-LLM extraction pass over the 4,407 reports attacks the ceiling directly, needs **zero
+Kaggle quota**, and has precedent — every label gain in this project came from better extraction.
+Not started; needs API access and is a spend decision.
+
+### Honest accounting of this session
+
+Net LB contribution: **zero.** 0.864 predates it and was matched independently by `ours16`. Costs
+incurred: one dead submission slot (`slot-v4`, 10 members, hit the 9 h cap and returned no score —
+the timeout risk was flagged before pushing and pushed anyway), one −0.007 regression (`slot-v5`,
+shipped on a CV number before any LB result), and a large share of both compute budgets spent on
+levers that measured null. The recurring methodological error was treating grouped-CV gains on
+report-derived labels as results, when the leaderboard is scored on real ground truth and the two
+decoupled once CV passed ~0.82.
+
+Delivered that is worth keeping: 137-test suite covering the slot pipeline (was 60, and the slot
+code had zero coverage), `tests/test_slots.py`; the `gattn`-era `src/` resync (`GroupAttnHead`,
+`build_study_multi`, `ShardedCache`, `members.py`); `scripts/make_pseudo_labels.py` with
+circularity guards; and the convergence finding above.

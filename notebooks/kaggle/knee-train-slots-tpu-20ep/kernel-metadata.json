@@ -1,0 +1,30 @@
+{
+  "id": "sibusisokhumalo11/knee-train-slots-tpu-20ep",
+  "id_no": 130561776,
+  "title": "knee-train-slots-tpu-20ep",
+  "code_file": "knee-train-slots-tpu-20ep.py",
+  "language": "python",
+  "kernel_type": "script",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_tpu": true,
+  "enable_internet": false,
+  "keywords": [
+    "tpu"
+  ],
+  "dataset_sources": [
+    "sibusisokhumalo11/knee-labels",
+    "sibusisokhumalo11/knee-src"
+  ],
+  "kernel_sources": [
+    "sibusisokhumalo11/knee-cache"
+  ],
+  "competition_sources": [
+    "rsna-knee-abnormality-detection"
+  ],
+  "model_sources": [
+    "metaresearch/dinov2/PyTorch/small/1"
+  ],
+  "docker_image": "gcr.io/kaggle-private-byod/python-tpuvm@sha256:a2111cb9be558ea4bc187754bb95d7b65e90d8259434f1eb0e0ab1193ff498c0",
+  "machine_shape": "TpuV5E8"
+}
