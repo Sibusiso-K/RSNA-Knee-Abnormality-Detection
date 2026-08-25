@@ -4,6 +4,16 @@
     python scripts/extract_labels_llm.py --demo              # sanity check, no data needed
     python scripts/extract_labels_llm.py --evaluate           # score against the 58 gold studies
     python scripts/extract_labels_llm.py --compare             # LLM vs rule extractor, side by side
+    python scripts/extract_labels_llm.py --api-evaluate --confirm-spend
+                                                                # frontier API vs the 58 gold studies
+
+--api-evaluate calls a COMMERCIALLY HOSTED LLM (default: Anthropic, see
+src/extract/api.py) and is real, billed API usage — 58 short calls, expected
+cost is cents. --confirm-spend is required and does nothing else; it exists
+so this can't fire by accident. Requires ANTHROPIC_API_KEY. Permitted under
+the host's 2026-08-08 ruling (discussion/733965); see
+docs/08-model-and-rules.md for the "minimal cost" constraint this must stay
+inside before scaling to the full 4,407-report corpus.
 
 Requires an Ollama server running locally (`ollama serve`, or the desktop
 app) with a model pulled — defaults to llama3.2. Pick a different one with
@@ -146,11 +156,54 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_api_evaluate(args: argparse.Namespace) -> int:
+    if not args.confirm_spend:
+        print(
+            "--api-evaluate makes real, billed calls to a commercial LLM API.\n"
+            "Re-run with --confirm-spend to proceed.",
+            file=sys.stderr,
+        )
+        return 2
+
+    from src.extract.api import DEFAULT_MODEL as DEFAULT_API_MODEL
+    from src.extract.api import APIExtractor, APIExtractorConfig
+    from src.extract.evaluate import evaluate, format_report
+
+    model = args.api_model or DEFAULT_API_MODEL
+    try:
+        extractor = APIExtractor(APIExtractorConfig(model=model, timeout_seconds=args.timeout))
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+
+    gold = _load_gold(args.limit)
+    print(f"gold studies: {len(gold)}  (model: {model})")
+
+    start = time.time()
+    predicted = extractor.extract_frame(gold, id_column=ID_COLUMN)
+    elapsed = time.time() - start
+    print(f"extraction took {elapsed:.0f}s ({elapsed / len(gold):.1f}s/study)\n")
+
+    reports, macro = evaluate(gold, predicted, args.threshold, ID_COLUMN)
+    print(format_report(reports, macro))
+
+    out = DATA / f"api_scores_{model.replace(':', '_')}.csv"
+    predicted.to_csv(out, index=False)
+    print(f"\nwrote {out}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--demo", action="store_true")
     parser.add_argument("--evaluate", action="store_true")
     parser.add_argument("--compare", action="store_true")
+    parser.add_argument("--api-evaluate", action="store_true")
+    parser.add_argument(
+        "--confirm-spend", action="store_true",
+        help="required alongside --api-evaluate; makes real, billed API calls",
+    )
+    parser.add_argument("--api-model", default=None, help="override the API model id")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--timeout", type=int, default=90)
@@ -164,6 +217,8 @@ def main() -> int:
         return cmd_demo(args)
     if args.compare:
         return cmd_compare(args)
+    if args.api_evaluate:
+        return cmd_api_evaluate(args)
     if args.evaluate:
         return cmd_evaluate(args)
     parser.print_help()
