@@ -2,6 +2,16 @@
 
 Settings on Kaggle: Accelerator GPU T4 x2 | Internet OFF | DINOv2 attached
 
+**Push with `--accelerator NvidiaTeslaT4` explicitly** (as
+scripts/launch_kaggle.sh does for every kaggle/<name> config) — this
+directory predates that convention, so a plain `kaggle kernels push -p
+notebooks/kaggle/knee-train-pseudo-sel` has no accelerator override and
+Kaggle may hand back a P100 instead. This install of PyTorch only supports
+sm_70+ (T4 is sm_75); P100 is sm_60 and every CUDA op fails immediately
+with a UserWarning followed by real errors - confirmed 2026-08-31, exactly
+the same failure mode launch_kaggle.sh's comments already warn about for
+the kaggle/<name> configs.
+
 Attach:
   - knee-cache-v1  -> cache_train_*.npy, mask_train_*.npy, index_train_*.csv
   - knee-labels    -> the label CSV chosen by scripts/compare_labels.py
