@@ -8,9 +8,6 @@
   "enable_gpu": true,
   "enable_tpu": false,
   "enable_internet": false,
-  "keywords": [
-    "tpu"
-  ],
   "dataset_sources": [
     "sibusisokhumalo11/knee-labels",
     "sibusisokhumalo11/knee-labels-pseudo",
@@ -24,7 +21,5 @@
   ],
   "model_sources": [
     "metaresearch/dinov2/PyTorch/small/1"
-  ],
-  "docker_image": "gcr.io/kaggle-private-byod/python-tpuvm@sha256:a2111cb9be558ea4bc187754bb95d7b65e90d8259434f1eb0e0ab1193ff498c0",
-  "machine_shape": "NvidiaTeslaT4"
+  ]
 }

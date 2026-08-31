@@ -139,6 +139,24 @@ xm = None
 if not XLA:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+# Fail loudly rather than silently train at CPU speed. Measured cost of not
+# having this: knee-train-pseudo-sel ran a full GPU-quota session at ~20s/step
+# (CPU speed) instead of GPU speed because a stale docker_image pin in this
+# kernel's metadata (leftover from its TPU-era lineage) shipped a CPU-only
+# torch build - torch.cuda.is_available() correctly returned False, so the
+# code "worked", it just silently did the wrong thing for 2.5 hours before a
+# separate stall ended it. REQUIRE_CUDA=0 is the escape hatch for genuinely
+# running this on CPU on purpose (e.g. a local smoke test).
+if not XLA and os.environ.get("REQUIRE_CUDA", "1") != "0" and device.type != "cuda":
+    raise SystemExit(
+        f"device resolved to {device.type}, not cuda, on a GPU-accelerator "
+        f"kernel (torch {torch.__version__}). This almost always means the "
+        f"environment shipped a CPU-only torch build, not that the GPU is "
+        f"absent - check kernel-metadata.json for a stale docker_image pin "
+        f"before assuming the accelerator setting is wrong. Set "
+        f"REQUIRE_CUDA=0 to run on CPU on purpose."
+    )
+
 log(f"device: {device}  torch {torch.__version__}  XLA={XLA}")
 if XLA:
     import torch_xla
