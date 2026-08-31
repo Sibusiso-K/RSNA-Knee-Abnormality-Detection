@@ -27,6 +27,7 @@ import sys
 import glob
 import time
 import shutil
+import threading
 
 import numpy as np
 import pandas as pd
@@ -441,12 +442,48 @@ def run_fold(fold):
     valid_y = valid_df[[f"{t}__val" for t in TARGETS]].values.astype(np.float32)
     gold_rows = gold_frame["row"].values if len(gold_frame) else np.array([], int)
 
+    # Watchdog against a silent stall. knee-train-pseudo-sel has twice burned
+    # its FULL session (12h GPU here; the 24ep runs separately burned the 9h
+    # TPU cap) on what should be a <1h fold, with only an epoch-2 "best"
+    # checkpoint to show for it and an EMPTY log — Kaggle's log shipping does
+    # not survive a hard SIGKILL at the timeout, so a genuine stall and a
+    # slow-but-working run are indistinguishable after the fact unless
+    # something fails FAST and LOUD instead of waiting for Kaggle's own cap.
+    #
+    # Runs on a background thread, not a check inside the step loop: a check
+    # placed after a step's own code only fires once that step RETURNS, which
+    # does nothing for a true deadlock (blocked forever on a stalled mmap
+    # read, say) where the step body never completes at all. A thread that
+    # independently watches wall-clock time against a heartbeat updated after
+    # every step catches both a slow-but-live loop AND a true deadlock.
+    #
+    # STEP_TIMEOUT_S is deliberately generous — the slowest step observed in
+    # any prior run here, GPU or TPU, is under 5s — so this should only ever
+    # fire on a real stall, not normal variance.
+    STEP_TIMEOUT_S = float(os.environ.get("STEP_TIMEOUT_S", "120"))
+    _last_heartbeat = [time.time()]
+
+    def _watchdog():
+        while True:
+            time.sleep(30)
+            stalled_for = time.time() - _last_heartbeat[0]
+            if stalled_for > STEP_TIMEOUT_S:
+                log(
+                    f"!! WATCHDOG: no training-step progress in {stalled_for:.0f}s "
+                    f"(limit {STEP_TIMEOUT_S:.0f}s) - stall detected, aborting "
+                    f"rather than silently burning the rest of the session."
+                )
+                os._exit(1)
+
+    threading.Thread(target=_watchdog, daemon=True).start()
+
     best = 0.0
     for epoch in range(EPOCHS):
         model.train()
         order = np.random.permutation(len(train_rows))
         running, t_epoch = None, time.time()
         for step in range(steps):
+            t_step = time.time()
             sel = order[step * BATCH : (step + 1) * BATCH]
             if len(sel) == 0:
                 continue
@@ -492,8 +529,10 @@ def run_fold(fold):
             # every fiftieth — which turns a compute-bound loop into a
             # latency-bound one.
             running = loss.detach() if running is None else running + loss.detach()
+            _last_heartbeat[0] = time.time()
             if step % 50 == 0:
-                log(f"  e{epoch} {step}/{steps} loss {float(loss.item()):.4f}")
+                log(f"  e{epoch} {step}/{steps} loss {float(loss.item()):.4f} "
+                    f"({time.time() - t_step:.1f}s/step)")
 
         epoch_loss = float(running.item()) / max(steps, 1) if running is not None else float("nan")
         score, per_label = macro_auc(valid_y, predict(model, valid_rows))
@@ -506,6 +545,18 @@ def run_fold(fold):
             line += f"  | gold58 {gold_score:.4f}"
         log(line)
         log("   " + "  ".join(f"{k}:{v:.3f}" for k, v in sorted(per_label.items())))
+
+        # A tiny marker file, overwritten every epoch, independent of the
+        # ~90 MB checkpoint. If a run is ever killed again with an empty log
+        # (the on-disk log did not survive the SIGKILL last time, twice), this
+        # is a second, much-cheaper-to-flush record of exactly how far it got
+        # and whether epochs were taking the expected few minutes or the
+        # multi-hour-per-epoch pace that would mean a stall, not just slow.
+        with open(f"progress_fold{fold}.txt", "w") as fh:
+            fh.write(
+                f"fold {fold}  epoch {epoch}/{EPOCHS}  score {score:.4f}  "
+                f"best {max(best, score):.4f}  epoch_wall_s {time.time() - t_epoch:.0f}\n"
+            )
 
         if score > best:
             best = score
