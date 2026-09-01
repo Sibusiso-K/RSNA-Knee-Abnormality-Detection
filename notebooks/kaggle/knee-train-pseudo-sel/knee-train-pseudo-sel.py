@@ -434,14 +434,26 @@ def find_dinov2():
 DINOV2 = find_dinov2()
 log(f"encoder: {DINOV2}")
 
+# Load the backbone from disk ONCE, not once per fold. This run has stalled
+# for minutes exactly once per fold boundary, twice now (see progress
+# markers from prior runs) - a new fold's from_pretrained() call re-reading
+# the checkpoint from Kaggle's mounted input storage. The watchdog above
+# catches the stall fast either way, but not re-touching that mount five
+# times is the actual fix. Each fold still gets its own independently
+# trainable copy - SlotNet deepcopies a non-string source instead of
+# sharing this instance's parameters across folds.
+from transformers import AutoModel  # noqa: E402
+
+DINOV2_MODEL = AutoModel.from_pretrained(DINOV2)
+
 
 def run_fold(fold):
     train_df = frame[frame["fold"] != fold]
     valid_df = frame[frame["fold"] == fold]
     log(f"\n=== fold {fold}: train {len(train_df)} / valid {len(valid_df)} ===")
-    dinov2 = DINOV2
+    dinov2 = DINOV2  # path, kept only for the "encoder" field in the checkpoint
 
-    model = SlotNet(dinov2, unfreeze_last=UNFREEZE_LAST, pool=POOL, head="xattn").to(device)
+    model = SlotNet(DINOV2_MODEL, unfreeze_last=UNFREEZE_LAST, pool=POOL, head="xattn").to(device)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     # Log the hidden size, not just the path. "small" and "base" mount at
     # similar-looking paths, differ by 2x in feature width and ~4x in

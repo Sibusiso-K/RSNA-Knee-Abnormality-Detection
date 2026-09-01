@@ -372,7 +372,7 @@ class SlotNet(nn.Module):
     #: up. 336 = 14x24 and 224 = 14x16; **256 is not** (18.29).
     PATCH = 14
 
-    def __init__(self, source: str, unfreeze_last: int = 6, pool: str = "cls_mean_focal",
+    def __init__(self, source, unfreeze_last: int = 6, pool: str = "cls_mean_focal",
                  dropout: float = 0.2, prior: bool = True, head: str = "slot") -> None:
         super().__init__()
         from transformers import AutoModel
@@ -382,7 +382,21 @@ class SlotNet(nn.Module):
         # silently stops loading its members is worse than one that never gained
         # a new architecture.
         self.head_type = head
-        self.vit = AutoModel.from_pretrained(source)
+        if isinstance(source, str):
+            self.vit = AutoModel.from_pretrained(source)
+        else:
+            # An already-loaded backbone, not a path — passed in to avoid
+            # calling from_pretrained() again. That call reads the checkpoint
+            # off Kaggle's mounted input storage, and a 5-fold training loop
+            # that calls it once per fold hit the SAME transient stall, at
+            # the SAME point (a new fold's model construction), four times
+            # across two independent scripts and both accelerators (GPU and
+            # TPU) in one session — see docs/12-handover.md. Deepcopy so each
+            # fold still gets an independently-trainable module; sharing one
+            # instance across folds would let one fold's gradient updates
+            # corrupt the "fresh" initialisation the next fold expects.
+            import copy
+            self.vit = copy.deepcopy(source)
         self.pool = pool
         parts = {"cls_mean": 2, "cls_mean_focal": 3}[pool]
 
