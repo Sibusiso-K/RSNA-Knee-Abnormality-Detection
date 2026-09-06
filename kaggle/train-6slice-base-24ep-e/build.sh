@@ -17,5 +17,5 @@ grep -q 'os.environ.get("FOLDS", "4")'      "$2/script.py" || { echo "FOLDS patc
 grep -q 'os.environ.get("EPOCHS", "24")'    "$2/script.py" || { echo "EPOCHS patch missed" >&2; exit 1; }
 grep -q 'take_group'                        "$2/script.py" || { echo "multi-group cache needs group sampling" >&2; exit 1; }
 grep -q 'xm.mark_step()'                    "$2/script.py" || { echo "XLA needs mark_step" >&2; exit 1; }
-grep -q '_watchdog'                         "$2/script.py" || { echo "stall watchdog missed" >&2; exit 1; }
+grep -q 'TrainingWatchdog'                         "$2/script.py" || { echo "stall watchdog missed" >&2; exit 1; }
 grep -q 'DINOV2_MODEL'                      "$2/script.py" || { echo "disk-reload fix missed" >&2; exit 1; }

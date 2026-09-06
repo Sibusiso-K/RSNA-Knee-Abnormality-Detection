@@ -28,7 +28,6 @@ counted and printed, so a silent degradation cannot masquerade as a result.
 
 import os
 import sys
-import glob
 import time
 import shutil
 import traceback
@@ -89,6 +88,7 @@ if _src and not os.path.exists(PKG + "/src"):
 sys.path.insert(0, PKG)
 
 from src.data.cache import N_SLICE, build_study      # noqa: E402
+from src.data.discovery import find_files            # noqa: E402
 from src.data.slots import GROUP, IMG, N_SLOT        # noqa: E402
 
 N_GROUPS = max(1, N_SLICE // GROUP)
@@ -189,12 +189,19 @@ try:
         return candidates[0][0]
 
     # Both naming conventions: ours (knee_slot_fold*.pth) and the public
-    # members (m_*.pt). A mixed ensemble is the point, so the glob cannot be
+    # members (m_*.pt). A mixed ensemble is the point, so the search cannot be
     # tied to our own filenames.
-    checkpoints = sorted(
-        glob.glob(f"{INPUT}/**/knee_slot_fold*.pth", recursive=True)
-        + glob.glob(f"{INPUT}/**/m_*.pt", recursive=True)
-        + glob.glob(f"{INPUT}/**/champ_fold*.pt", recursive=True)
+    #
+    # find_files prunes SKIP_DIRS before descending, unlike the recursive
+    # glob this replaced (`glob.glob(f"{INPUT}/**/pattern", recursive=True)`):
+    # that walks test_series/ IN FULL before the SKIP_DIRS filter (which was
+    # never even applied here) throws the results away, and test_series/ is
+    # the ~1,100s-per-call directory this submission's own 9h cap is spent
+    # against (see the SKIP_DIRS comment above and find_dinov2 just above,
+    # which already used the pruned pattern - this search just hadn't been
+    # updated to match).
+    checkpoints = find_files(
+        [INPUT], ["knee_slot_fold*.pth", "m_*.pt", "champ_fold*.pt"], skip_dirs=SKIP_DIRS
     )
     if not checkpoints:
         write_and_exit("no checkpoints found")

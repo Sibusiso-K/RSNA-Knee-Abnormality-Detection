@@ -24,10 +24,8 @@ Two rules carried over from kaggle_02_train.py, both load-bearing:
 
 import os
 import sys
-import glob
 import time
 import shutil
-import threading
 
 import numpy as np
 import pandas as pd
@@ -95,6 +93,7 @@ from src.data.slots import IMG, N_SLOT, SLOTS          # noqa: E402
 from src.labels import TARGETS                          # noqa: E402
 from src.model.slotnet import SlotNet                    # noqa: E402
 from src.model.validation import check_grouping, grouped_folds  # noqa: E402
+from src.model.watchdog import TrainingWatchdog          # noqa: E402
 
 ID = "StudyInstanceUID"
 
@@ -174,19 +173,15 @@ def shard_paths(pattern):
     two-shard cache: the 12-slice run trained on 2,176 studies instead of 4,349
     and scored 0.7956, which looked like "more slices hurt" and was really
     "half the data". Search from INPUT and sort by shard number.
+
+    Delegates to src.data.discovery.find_files, which prunes SKIP_DIRS before
+    descending rather than filtering a completed recursive glob afterward -
+    the earlier version here did the latter, paying the full traversal cost
+    of train_series/test_series before throwing the results away.
     """
-    roots = [INPUT, ".", ".."]
-    hits = []
-    for root in roots:
-        if os.path.isdir(root):
-            hits += glob.glob(os.path.join(root, "**", pattern), recursive=True)
-    hits = [h for h in hits if not any(f"{os.sep}{d}{os.sep}" in h for d in SKIP_DIRS)]
-    seen, out = set(), []
-    for h in sorted(set(hits), key=lambda x: os.path.basename(x)):
-        if os.path.basename(h) not in seen:
-            seen.add(os.path.basename(h))
-            out.append(h)
-    return out
+    from src.data.discovery import find_files
+
+    return find_files([INPUT, ".", ".."], pattern, skip_dirs=SKIP_DIRS)
 
 
 index_paths = shard_paths("index_train_*.csv")
@@ -411,7 +406,16 @@ def autocast():
 
 
 @torch.no_grad()
-def predict(model, rows):
+def predict(model, rows, heartbeat=None):
+    """`heartbeat`, if given, is called after every batch.
+
+    Without this, a validation pass slower than the training watchdog's
+    STEP_TIMEOUT_S looks identical to a real stall - the watchdog only ever
+    saw heartbeats from the training step loop, never from predict(), so any
+    sufficiently large or slow validation/gold-holdout pass (this runs once
+    per epoch, on the full valid + gold sets) could false-abort a run that
+    was working the entire time.
+    """
     model.eval()
     out = []
     for start in range(0, len(rows), BATCH):
@@ -431,6 +435,8 @@ def predict(model, rows):
         if XLA:
             xm.mark_step()
         out.append(probs.cpu().numpy())
+        if heartbeat is not None:
+            heartbeat()
     return np.concatenate(out) if out else np.zeros((0, len(TARGETS)), np.float32)
 
 
@@ -517,141 +523,138 @@ def run_fold(fold):
     # indistinguishable after the fact. This has to fail fast and loud
     # instead of waiting for Kaggle's own cap to do it silently.
     #
-    # Runs on a background thread, not a check inside the step loop: a check
-    # placed after a step's own code only fires once that step RETURNS, which
-    # does nothing for a true deadlock where the step body never completes at
-    # all. A thread that independently watches wall-clock time against a
-    # heartbeat updated after every step catches both a slow-but-live loop
-    # AND a true deadlock.
+    # Scoped to this fold via `with`: TrainingWatchdog stops and joins its
+    # background thread on exit (success OR exception), so it cannot outlive
+    # this fold and fire during whatever runs next — the first version of
+    # this fix was a bare daemon thread with no stop mechanism, and it did
+    # exactly that once, in testing.
     #
-    # STEP_TIMEOUT_S is deliberately generous — the slowest step observed in
-    # any prior run here, GPU or TPU, is under 5s — so this should only ever
-    # fire on a real stall, not normal variance. mark_step() on the XLA path
-    # forces the actual device computation to complete before the heartbeat
-    # updates, so this also catches an XLA graph that never resolves, not
-    # just a Python-side hang.
+    # STEP_TIMEOUT_S is deliberately generous — the slowest TRAINING step
+    # observed in any prior run here, GPU or TPU, is under 5s — so this
+    # should only ever fire on a real stall, not normal variance. mark_step()
+    # on the XLA path forces the actual device computation to complete
+    # before the heartbeat updates, so this also catches an XLA graph that
+    # never resolves, not just a Python-side hang.
     STEP_TIMEOUT_S = float(os.environ.get("STEP_TIMEOUT_S", "120"))
-    _last_heartbeat = [time.time()]
-
-    def _watchdog():
-        while True:
-            time.sleep(30)
-            stalled_for = time.time() - _last_heartbeat[0]
-            if stalled_for > STEP_TIMEOUT_S:
-                log(
-                    f"!! WATCHDOG: no training-step progress in {stalled_for:.0f}s "
-                    f"(limit {STEP_TIMEOUT_S:.0f}s) - stall detected, aborting "
-                    f"rather than silently burning the rest of the session."
-                )
-                os._exit(1)
-
-    threading.Thread(target=_watchdog, daemon=True).start()
 
     best = 0.0
-    for epoch in range(EPOCHS):
-        model.train()
-        order = np.random.permutation(len(train_rows))
-        running, t_epoch = None, time.time()
-        for step in range(steps):
-            t_step = time.time()
-            sel = order[step * BATCH : (step + 1) * BATCH]
-            if len(sel) == 0:
-                continue
-            rows = train_rows[sel]
-            g = np.random.randint(N_GROUPS)
-            x = torch.from_numpy(take_input(rows, g)).to(device)
-            m = torch.from_numpy(mask[rows]).float().to(device)
-            y = torch.from_numpy(train_y[sel]).to(device)
+    with TrainingWatchdog(timeout_s=STEP_TIMEOUT_S, log=log) as watchdog:
+        for epoch in range(EPOCHS):
+            model.train()
+            order = np.random.permutation(len(train_rows))
+            running, t_epoch = None, time.time()
+            for step in range(steps):
+                t_step = time.time()
+                sel = order[step * BATCH : (step + 1) * BATCH]
+                if len(sel) == 0:
+                    continue
+                rows = train_rows[sel]
+                g = np.random.randint(N_GROUPS)
+                x = torch.from_numpy(take_input(rows, g)).to(device)
+                m = torch.from_numpy(mask[rows]).float().to(device)
+                y = torch.from_numpy(train_y[sel]).to(device)
 
-            x = augment(x)
-            with autocast():
-                # Soft targets are used as-is. BCE against a target of 0.28
-                # expresses "probably absent but the report did not say", which
-                # is the information a hard 0 throws away.
-                loss = criterion(model(x, m, TRAIN_SIZE), y)
+                x = augment(x)
+                with autocast():
+                    # Soft targets are used as-is. BCE against a target of 0.28
+                    # expresses "probably absent but the report did not say", which
+                    # is the information a hard 0 throws away.
+                    loss = criterion(model(x, m, TRAIN_SIZE), y)
 
-            if XLA:
-                loss.backward()
-                # xm.optimizer_step inserts the cross-replica reduction (a
-                # no-op on one core, correct on eight) and applies the update.
-                xm.optimizer_step(optimizer)
-                # mark_step is NOT optional and NOT implied by the line above:
-                # xm.optimizer_step defaults to barrier=False and does not cut
-                # the graph. Without this, XLA keeps tracing lazily and the
-                # graph grows until something forces evaluation — which here
-                # was loss.item() every 50 steps, so it compiled FIFTY steps of
-                # training as one graph. Measured cost of omitting it: 12.2
-                # s/step instead of 0.12, then
-                #   "Ran out of memory in memory space hbm.
-                #    Used 16.36G of 15.75G"
-                # The probe did not hit this only because it passed
-                # barrier=True, which calls mark_step internally.
-                xm.mark_step()
-            else:
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            scheduler.step()
-            optimizer.zero_grad(set_to_none=True)
+                if XLA:
+                    loss.backward()
+                    # xm.optimizer_step inserts the cross-replica reduction (a
+                    # no-op on one core, correct on eight) and applies the update.
+                    xm.optimizer_step(optimizer)
+                    # mark_step is NOT optional and NOT implied by the line above:
+                    # xm.optimizer_step defaults to barrier=False and does not cut
+                    # the graph. Without this, XLA keeps tracing lazily and the
+                    # graph grows until something forces evaluation — which here
+                    # was loss.item() every 50 steps, so it compiled FIFTY steps of
+                    # training as one graph. Measured cost of omitting it: 12.2
+                    # s/step instead of 0.12, then
+                    #   "Ran out of memory in memory space hbm.
+                    #    Used 16.36G of 15.75G"
+                    # The probe did not hit this only because it passed
+                    # barrier=True, which calls mark_step internally.
+                    xm.mark_step()
+                else:
+                    scaler.scale(loss).backward()
+                    scaler.step(optimizer)
+                    scaler.update()
+                scheduler.step()
+                optimizer.zero_grad(set_to_none=True)
 
-            # Accumulate on-device. `.item()` forces a host sync, and on XLA
-            # that stalls the pipeline every step for a number only printed
-            # every fiftieth — which turns a compute-bound loop into a
-            # latency-bound one.
-            running = loss.detach() if running is None else running + loss.detach()
-            _last_heartbeat[0] = time.time()
-            if step % 50 == 0:
-                log(f"  e{epoch} {step}/{steps} loss {float(loss.item()):.4f} "
-                    f"({time.time() - t_step:.1f}s/step)")
+                # Accumulate on-device. `.item()` forces a host sync, and on XLA
+                # that stalls the pipeline every step for a number only printed
+                # every fiftieth — which turns a compute-bound loop into a
+                # latency-bound one.
+                running = loss.detach() if running is None else running + loss.detach()
+                watchdog.heartbeat()
+                if step % 50 == 0:
+                    log(f"  e{epoch} {step}/{steps} loss {float(loss.item()):.4f} "
+                        f"({time.time() - t_step:.1f}s/step)")
 
-        epoch_loss = float(running.item()) / max(steps, 1) if running is not None else float("nan")
-        score, per_label = macro_auc(valid_y, predict(model, valid_rows))
-        line = (f"  epoch {epoch}: loss {epoch_loss:.4f}  "
-                f"grouped-CV macro AUC {score:.4f}  ({time.time() - t_epoch:.0f}s)")
-        if len(gold_rows):
-            gold_pred = predict(model, gold_rows)
-            gold_y = gold_truth.loc[gold_frame[ID]].values.astype(np.float32)
-            gold_score, _ = macro_auc(gold_y, gold_pred, drop_undecided=False)
-            line += f"  | gold58 {gold_score:.4f}"
-        log(line)
-        log("   " + "  ".join(f"{k}:{v:.3f}" for k, v in sorted(per_label.items())))
+            epoch_loss = float(running.item()) / max(steps, 1) if running is not None else float("nan")
+            # heartbeat=watchdog.heartbeat: validation (predict() over the
+            # full valid set, then the gold holdout) was the second real bug
+            # here - it never fed the watchdog at all, so a validation pass
+            # slower than STEP_TIMEOUT_S looked exactly like a stall. This
+            # keeps detection live through validation instead of disabling
+            # it, so a validation pass that genuinely hangs still aborts.
+            score, per_label = macro_auc(valid_y, predict(model, valid_rows, heartbeat=watchdog.heartbeat))
+            line = (f"  epoch {epoch}: loss {epoch_loss:.4f}  "
+                    f"grouped-CV macro AUC {score:.4f}  ({time.time() - t_epoch:.0f}s)")
+            if len(gold_rows):
+                gold_pred = predict(model, gold_rows, heartbeat=watchdog.heartbeat)
+                gold_y = gold_truth.loc[gold_frame[ID]].values.astype(np.float32)
+                gold_score, _ = macro_auc(gold_y, gold_pred, drop_undecided=False)
+                line += f"  | gold58 {gold_score:.4f}"
+            log(line)
+            log("   " + "  ".join(f"{k}:{v:.3f}" for k, v in sorted(per_label.items())))
 
-        # A tiny marker file, overwritten every epoch, independent of the
-        # ~90 MB checkpoint. If a run is ever killed again with an empty log
-        # (the on-disk log did not survive the SIGKILL, twice now, on two
-        # different scripts sharing this loop), this is a second,
-        # much-cheaper-to-flush record of exactly how far it got and whether
-        # epochs were taking the expected few minutes or a stall-length pace.
-        with open(f"progress_fold{fold}.txt", "w") as fh:
-            fh.write(
-                f"fold {fold}  epoch {epoch}/{EPOCHS}  score {score:.4f}  "
-                f"best {max(best, score):.4f}  epoch_wall_s {time.time() - t_epoch:.0f}\n"
-            )
+            # A tiny marker file, overwritten every epoch, independent of the
+            # ~90 MB checkpoint. If a run is ever killed again with an empty log
+            # (the on-disk log did not survive the SIGKILL, twice now, on two
+            # different scripts sharing this loop), this is a second,
+            # much-cheaper-to-flush record of exactly how far it got and whether
+            # epochs were taking the expected few minutes or a stall-length pace.
+            with open(f"progress_fold{fold}.txt", "w") as fh:
+                fh.write(
+                    f"fold {fold}  epoch {epoch}/{EPOCHS}  score {score:.4f}  "
+                    f"best {max(best, score):.4f}  epoch_wall_s {time.time() - t_epoch:.0f}\n"
+                )
 
-        if score > best:
-            best = score
-            # On XLA the state dict holds device tensors. Move to CPU before
-            # saving so the checkpoint loads anywhere - the submission notebook
-            # runs on a GPU and must not need torch_xla to read this file.
-            state = model.state_dict()
-            if XLA:
-                state = {k: v.cpu() for k, v in state.items()}
-            torch.save(
-                {
-                    "model": state,
-                    "device": "xla" if XLA else device.type,
-                    "encoder": os.path.basename(dinov2),
-                    "variant": VARIANT, "pool": POOL, "size": TRAIN_SIZE,
-                    "head": getattr(model, "head_type", "slot"),
-                    "slices_per_slot": int(cache.shape[2]),
-                    "slots": [s[0] for s in SLOTS],
-                    "fold": fold, "score": score, "epoch": epoch,
-                    "labels": os.path.basename(label_path),
-                    "epochs": EPOCHS, "n_groups": int(len(set(groups))),
-                },
-                f"knee_slot_fold{fold}.pth",
-            )
-            log(f"   saved (best {best:.4f})")
+            if score > best:
+                best = score
+                # On XLA the state dict holds device tensors. Move to CPU before
+                # saving so the checkpoint loads anywhere - the submission notebook
+                # runs on a GPU and must not need torch_xla to read this file.
+                state = model.state_dict()
+                if XLA:
+                    state = {k: v.cpu() for k, v in state.items()}
+                # Heartbeat immediately before the write: a ~90-350 MB save to
+                # Kaggle's mounted output storage is slow-but-legitimate, not
+                # progress the watchdog should be timing against. Without
+                # this, a slow disk write competes with STEP_TIMEOUT_S same
+                # as a real stall would.
+                watchdog.heartbeat()
+                torch.save(
+                    {
+                        "model": state,
+                        "device": "xla" if XLA else device.type,
+                        "encoder": os.path.basename(dinov2),
+                        "variant": VARIANT, "pool": POOL, "size": TRAIN_SIZE,
+                        "head": getattr(model, "head_type", "slot"),
+                        "slices_per_slot": int(cache.shape[2]),
+                        "slots": [s[0] for s in SLOTS],
+                        "fold": fold, "score": score, "epoch": epoch,
+                        "labels": os.path.basename(label_path),
+                        "epochs": EPOCHS, "n_groups": int(len(set(groups))),
+                    },
+                    f"knee_slot_fold{fold}.pth",
+                )
+                log(f"   saved (best {best:.4f})")
     return best
 
 
