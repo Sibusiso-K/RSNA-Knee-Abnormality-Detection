@@ -279,23 +279,33 @@ def run(frame, partial_path=None):
     crashes = 0
     for i in range(0, len(reports), BATCH):
         chunk = reports[i : i + BATCH]
-        # Two full-corpus runs have now died mid-pass with a 0-byte Kaggle log,
-        # taking the GPU hours with them. Whatever the cause (OOM on a long
-        # report, CUDA fragmentation), losing one batch of 4 is enormously
-        # cheaper than losing the run. Score the batch zero, clear the cache,
-        # and carry on — the count is printed loudly below, so this degrades
-        # visibly rather than silently.
+        # A pathological long report can OOM a multi-study generation batch.
+        # Do not turn every label in the batch into a zero: after freeing the
+        # cache, retry each study alone. Only a study that still fails alone
+        # receives the visible all-zero fallback.
         try:
             scores = extract_batch(chunk)
         except Exception as exc:
             crashes += 1
             print(f"  !! batch at {i} failed ({type(exc).__name__}: {exc}) — "
-                  f"scored 0, continuing", flush=True)
+                  f"retrying each study alone", flush=True)
             try:
                 torch.cuda.empty_cache()
             except Exception:
                 pass
-            scores = [{label: 0.0 for label in TARGETS} for _ in chunk]
+            scores = []
+            for offset, report in enumerate(chunk):
+                try:
+                    scores.extend(extract_batch([report]))
+                except Exception as retry_exc:
+                    print(f"  !! study at {i + offset} still failed "
+                          f"({type(retry_exc).__name__}: {retry_exc}) — scored 0",
+                          flush=True)
+                    try:
+                        torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                    scores.append({label: 0.0 for label in TARGETS})
         for uid, score in zip(uids[i : i + BATCH], scores):
             if all(v == 0.0 for v in score.values()):
                 failures += 1
@@ -310,9 +320,8 @@ def run(frame, partial_path=None):
     print(f"  all-zero outputs: {failures}/{len(reports)} "
           f"(parse failures or genuinely normal studies)")
     if crashes:
-        print(f"  !! {crashes} batch(es) CRASHED and were scored 0 — up to "
-              f"{crashes * BATCH} studies carry junk labels. Re-run this shard "
-              f"after deleting those rows if the count is material.")
+        print(f"  !! {crashes} batch(es) required single-study recovery; inspect "
+              "the individual retry messages above before using the labels.")
 
     scored = pd.DataFrame(rows, columns=[ID_COLUMN, *TARGETS])
     if len(prior):
