@@ -31,9 +31,23 @@ import shutil
 import sys
 import time
 
+# Set before importing torch. Long, heterogeneous reports can fragment the
+# generation allocator even when total free memory is sufficient.
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
 import numpy as np
 import pandas as pd
 import torch
+
+if not torch.cuda.is_available():
+    raise SystemExit("LLM labeling requires a CUDA GPU; retry with a T4-class accelerator.")
+_capability = torch.cuda.get_device_capability(0)
+if _capability[0] < 7:
+    raise SystemExit(
+        f"GPU compute capability sm_{_capability[0]}{_capability[1]} is unsupported by "
+        "this PyTorch/Qwen stack. Retry for a T4-class accelerator (sm_70+)."
+    )
+print(f"GPU: {torch.cuda.get_device_name(0)} (sm_{_capability[0]}{_capability[1]})")
 
 # --- src bootstrap (see kaggle_01_smoke.py) ------------------------------
 PKG = "/kaggle/working/pkg"
