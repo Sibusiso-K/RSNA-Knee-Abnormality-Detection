@@ -1,4 +1,14 @@
-"""Build an inference-only OOF/gold diagnostic; no retraining or submission."""
+"""Build an inference-only OOF/gold diagnostic; no retraining or submission.
+
+**Push with `--accelerator NvidiaTeslaT4` explicit**
+(`python -m kaggle kernels push -p OUTPUT_DIR --accelerator NvidiaTeslaT4`),
+never a plain `kernels push`. Without it Kaggle can hand back a P100, and
+this PyTorch build only supports sm_70+ (P100 is sm_60) - every CUDA op
+fails immediately. Hit three times now on three different kernels in this
+project (knee-train-pseudo-sel twice, this one once, 2026-09-07) - each
+time the CLI's status just says the run "failed" with no obvious cause
+until the web UI's Logs tab is checked and shows the accelerator was P100.
+"""
 import ast
 import json
 from pathlib import Path

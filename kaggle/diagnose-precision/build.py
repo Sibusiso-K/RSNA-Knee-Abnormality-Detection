@@ -3,6 +3,10 @@ these checkpoints were TRAINED and scored under, on TPU) vs fp16 (what a GPU
 eval defaults to). small fold 0 ONLY, three precision modes, one run.
 
 Usage: python kaggle/diagnose-precision/build.py OUTPUT_DIRECTORY
+
+**Push with `--accelerator NvidiaTeslaT4` explicit**, never a plain
+`kernels push` - see kaggle/evaluate-fresh24/build.py for why (P100
+incompatibility, hit three times in this project already).
 """
 import ast
 import json

@@ -5,6 +5,10 @@ characterise the mismatch (magnitude, sign, which folds/families) before
 fixing evaluate-fresh24 itself.
 
 Usage: python kaggle/diagnose-fresh24/build.py OUTPUT_DIRECTORY
+
+**Push with `--accelerator NvidiaTeslaT4` explicit**, never a plain
+`kernels push` - see kaggle/evaluate-fresh24/build.py for why (P100
+incompatibility, hit three times in this project already).
 """
 import ast
 import json
