@@ -37,7 +37,8 @@ def build(output):
         combined = np.zeros((int(scored.sum()), len(TARGETS)), dtype=np.float32)
         total_w = 0.0
         for member, (net, _slices, _head, _name) in zip(member_preds, models):
-            hidden = int(net.encoder.config.hidden_size)
+            # SlotNet exposes the HuggingFace DINO backbone as ``vit``.
+            hidden = int(net.vit.config.hidden_size)
             if hidden == 768:
                 weight = 0.5625 / 5.0
             elif hidden == 384:
