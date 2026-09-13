@@ -119,6 +119,30 @@ N_FOLDS = 5
 TRAIN_SIZE = int(os.environ.get("SIZE", str(IMG)))
 AUG_ROT_DEG, AUG_SCALE, AUG_SHIFT, AUG_INTENSITY = 8.0, 0.08, 0.05, 0.10
 
+# Recorded in every checkpoint so a second seed of the same family (a later,
+# separate diversity experiment) is distinguishable from a re-run of this
+# one. Previously unset - every run before this shared numpy/torch's
+# ambient, unrecorded RNG state.
+SEED = int(os.environ.get("SEED", "0"))
+np.random.seed(SEED)
+torch.manual_seed(SEED)
+
+#: Human-numbered epochs (1 = after the first epoch) to snapshot regardless
+#: of validation score, in addition to the existing best-on-this-backend's
+#: checkpoint. TPU (training) and CUDA (deployment/submission) validation
+#: measurably disagree on this architecture - see docs/12-handover.md and
+#: docs/15-claude-score-improvement-strategy.md - and it is NOT yet known
+#: whether they rank EPOCHS the same way, only that they score the same
+#: epoch differently. Best-only checkpointing overwrites every earlier
+#: epoch's weights, so there is no way to answer that after the fact - these
+#: snapshots exist so a later CUDA evaluation can compare epoch rankings
+#: without retraining. Late-schedule only: an early epoch is not a live
+#: candidate for deployment either way, snapshotting it would not answer the
+#: TPU-vs-CUDA ranking question, and it would multiply storage for nothing.
+SNAPSHOT_EPOCHS = frozenset(
+    int(e) for e in os.environ.get("SNAPSHOT_EPOCHS", "16,20,24").split(",") if e
+)
+
 # A cell this close to 0.5 is the labeller saying "the report does not address
 # this", not a weak positive. Excluded from the validation AUC: scoring against
 # a coerced 0 would measure how well the model reproduces silence.
@@ -625,8 +649,12 @@ def run_fold(fold):
                     f"best {max(best, score):.4f}  epoch_wall_s {time.time() - t_epoch:.0f}\n"
                 )
 
-            if score > best:
-                best = score
+            human_epoch = epoch + 1  # SNAPSHOT_EPOCHS is 1-numbered ("epoch 24"), epoch is 0-indexed
+            is_new_best = score > best
+            is_snapshot_epoch = human_epoch in SNAPSHOT_EPOCHS
+            if is_new_best or is_snapshot_epoch:
+                if is_new_best:
+                    best = score
                 # On XLA the state dict holds device tensors. Move to CPU before
                 # saving so the checkpoint loads anywhere - the submission notebook
                 # runs on a GPU and must not need torch_xla to read this file.
@@ -639,22 +667,37 @@ def run_fold(fold):
                 # this, a slow disk write competes with STEP_TIMEOUT_S same
                 # as a real stall would.
                 watchdog.heartbeat()
-                torch.save(
-                    {
-                        "model": state,
-                        "device": "xla" if XLA else device.type,
-                        "encoder": os.path.basename(dinov2),
-                        "variant": VARIANT, "pool": POOL, "size": TRAIN_SIZE,
-                        "head": getattr(model, "head_type", "slot"),
-                        "slices_per_slot": int(cache.shape[2]),
-                        "slots": [s[0] for s in SLOTS],
-                        "fold": fold, "score": score, "epoch": epoch,
-                        "labels": os.path.basename(label_path),
-                        "epochs": EPOCHS, "n_groups": int(len(set(groups))),
-                    },
-                    f"knee_slot_fold{fold}.pth",
-                )
-                log(f"   saved (best {best:.4f})")
+                blob = {
+                    "model": state,
+                    "device": "xla" if XLA else device.type,
+                    "encoder": os.path.basename(dinov2),
+                    "variant": VARIANT, "pool": POOL, "size": TRAIN_SIZE,
+                    "head": getattr(model, "head_type", "slot"),
+                    "slices_per_slot": int(cache.shape[2]),
+                    "slots": [s[0] for s in SLOTS],
+                    "fold": fold, "score": score, "epoch": epoch, "seed": SEED,
+                    "labels": os.path.basename(label_path),
+                    "epochs": EPOCHS, "n_groups": int(len(set(groups))),
+                }
+                if is_new_best:
+                    # Best-only: overwrites the prior best for this fold, same
+                    # as before this change. This is the checkpoint whatever
+                    # backend trained it considers its own best epoch - the
+                    # thing docs/15 calls "TPU best" when XLA=True.
+                    torch.save(blob, f"knee_slot_fold{fold}.pth")
+                    log(f"   saved best (best {best:.4f})")
+                if is_snapshot_epoch:
+                    # Never overwritten - one file per predefined late epoch,
+                    # independent of whether this backend judged it the best.
+                    # A separate CUDA evaluation reads these to ask "does the
+                    # backend that trained this agree with CUDA about which
+                    # epoch was best", which the best-only file alone cannot
+                    # answer once training moves past that epoch.
+                    torch.save(
+                        {**blob, "snapshot_epoch": human_epoch},
+                        f"knee_slot_fold{fold}_snap_e{human_epoch}.pth",
+                    )
+                    log(f"   saved snapshot e{human_epoch} (score {score:.4f})")
     return best
 
 
