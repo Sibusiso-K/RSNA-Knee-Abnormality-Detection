@@ -1,5 +1,11 @@
 # 00 — Project state (READ THIS FIRST)
 
+> **2026-09-13 update:** Confirmed best public score is **0.891** from Fresh10
+> 24-epoch uniform probability blending (submission 56165500). Read
+> [Claude's next-experiment strategy](15-claude-score-improvement-strategy.md)
+> for the current baseline, priorities and validation criteria. The session
+> narrative below is historical; its score ceiling conclusions are superseded.
+
 > **This is the living file.** It is the single source of truth for *where the project is right now*.
 > Every other doc explains something stable; this one changes constantly.
 > **Update it at the end of every working session.** If it's stale, everything else is a trap.
