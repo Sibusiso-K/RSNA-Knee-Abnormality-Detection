@@ -30,7 +30,6 @@ import shutil
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 T0 = time.time()
@@ -91,6 +90,7 @@ else:
 
 from src.data.slots import IMG, N_SLOT, SLOTS          # noqa: E402
 from src.labels import TARGETS                          # noqa: E402
+from src.model.loss import uncertainty_weighted_bce       # noqa: E402
 from src.model.slotnet import SlotNet                    # noqa: E402
 from src.model.validation import check_grouping, grouped_folds  # noqa: E402
 from src.model.watchdog import TrainingWatchdog          # noqa: E402
@@ -147,6 +147,17 @@ SNAPSHOT_EPOCHS = frozenset(
 # this", not a weak positive. Excluded from the validation AUC: scoring against
 # a coerced 0 would measure how well the model reproduces silence.
 UNDECIDED = 0.05
+
+#: Training-loss weight for the same undecided cells the validation metric
+#: already excludes. Default 1.0 is the control (every weight equal, an
+#: unchanged BCEWithLogitsLoss().mean() in effect - see
+#: uncertainty_weighted_bce's own test for the exact equivalence). Candidate
+#: values from docs/15-claude-score-improvement-strategy.md: 0.25, 0.0.
+#: Ordinary training weighted these cells identically to a report that
+#: explicitly said "absent", even though the validation metric was built on
+#: the premise that they carry no information either way - a plausible
+#: bottleneck, not a proven one. See src/model/loss.py.
+UNDECIDED_WEIGHT = float(os.environ.get("UNDECIDED_WEIGHT", "1.0"))
 
 # --- device: CUDA, XLA/TPU, or CPU --------------------------------------
 # One script for all three. The model, labels, folds and gold holdout are the
@@ -530,7 +541,6 @@ def run_fold(fold):
         total_steps=EPOCHS * steps + EPOCHS,
     )
     scaler = torch.amp.GradScaler("cuda", enabled=(not XLA) and device.type == "cuda")
-    criterion = nn.BCEWithLogitsLoss()
 
     train_rows = train_df["row"].values
     train_y = train_df[TARGETS].values.astype(np.float32)
@@ -582,8 +592,14 @@ def run_fold(fold):
                 with autocast():
                     # Soft targets are used as-is. BCE against a target of 0.28
                     # expresses "probably absent but the report did not say", which
-                    # is the information a hard 0 throws away.
-                    loss = criterion(model(x, m, TRAIN_SIZE), y)
+                    # is the information a hard 0 throws away. UNDECIDED_WEIGHT
+                    # separately controls how much gradient the cells closest
+                    # to 0.5 (report genuinely silent) contribute - see
+                    # src/model/loss.py.
+                    loss = uncertainty_weighted_bce(
+                        model(x, m, TRAIN_SIZE), y,
+                        undecided_weight=UNDECIDED_WEIGHT, undecided=UNDECIDED,
+                    )
 
                 if XLA:
                     loss.backward()
