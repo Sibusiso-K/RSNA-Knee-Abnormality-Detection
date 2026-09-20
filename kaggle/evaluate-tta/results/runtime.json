@@ -1,0 +1,102 @@
+[
+  {
+    "family": "small",
+    "fold": 0,
+    "n_studies": 870,
+    "identity_seconds": 128.88798332214355,
+    "tta_seconds": 218.64452862739563,
+    "identity_s_per_study": 0.14814710726683167,
+    "tta_s_per_study": 0.25131555014643175,
+    "tta_over_identity": 1.69639188225107
+  },
+  {
+    "family": "base",
+    "fold": 0,
+    "n_studies": 870,
+    "identity_seconds": 113.18906092643738,
+    "tta_seconds": 570.3848268985748,
+    "identity_s_per_study": 0.1301023688809625,
+    "tta_s_per_study": 0.6556147435615802,
+    "tta_over_identity": 5.039222184812305
+  },
+  {
+    "family": "small",
+    "fold": 1,
+    "n_studies": 870,
+    "identity_seconds": 112.39679265022278,
+    "tta_seconds": 224.51921248435974,
+    "identity_s_per_study": 0.12919171568991125,
+    "tta_s_per_study": 0.25806806032685026,
+    "tta_over_identity": 1.9975588910535937
+  },
+  {
+    "family": "base",
+    "fold": 1,
+    "n_studies": 870,
+    "identity_seconds": 112.86621975898743,
+    "tta_seconds": 568.3864462375641,
+    "identity_s_per_study": 0.1297312870792959,
+    "tta_s_per_study": 0.6533177542960507,
+    "tta_over_identity": 5.035930568519852
+  },
+  {
+    "family": "small",
+    "fold": 2,
+    "n_studies": 870,
+    "identity_seconds": 113.55516719818115,
+    "tta_seconds": 224.93962788581848,
+    "identity_s_per_study": 0.13052318068756455,
+    "tta_s_per_study": 0.258551296420481,
+    "tta_over_identity": 1.9808841238659318
+  },
+  {
+    "family": "base",
+    "fold": 2,
+    "n_studies": 870,
+    "identity_seconds": 112.95953941345215,
+    "tta_seconds": 569.1609523296356,
+    "identity_s_per_study": 0.129838551049945,
+    "tta_s_per_study": 0.6542079911834893,
+    "tta_over_identity": 5.038626709041408
+  },
+  {
+    "family": "small",
+    "fold": 3,
+    "n_studies": 870,
+    "identity_seconds": 111.91433358192444,
+    "tta_seconds": 223.95075869560242,
+    "identity_s_per_study": 0.12863716503669476,
+    "tta_s_per_study": 0.2574146651673591,
+    "tta_over_identity": 2.001090937396899
+  },
+  {
+    "family": "base",
+    "fold": 3,
+    "n_studies": 870,
+    "identity_seconds": 112.7425549030304,
+    "tta_seconds": 570.095293045044,
+    "identity_s_per_study": 0.1295891435667016,
+    "tta_s_per_study": 0.6552819460287861,
+    "tta_over_identity": 5.056611441308755
+  },
+  {
+    "family": "small",
+    "fold": 4,
+    "n_studies": 869,
+    "identity_seconds": 101.61216640472412,
+    "tta_seconds": 224.18532156944275,
+    "identity_s_per_study": 0.11692999586274352,
+    "tta_s_per_study": 0.2579808073296234,
+    "tta_over_identity": 2.2062842423465936
+  },
+  {
+    "family": "base",
+    "fold": 4,
+    "n_studies": 869,
+    "identity_seconds": 113.07451391220093,
+    "tta_seconds": 569.5345995426178,
+    "identity_s_per_study": 0.13012026917399416,
+    "tta_s_per_study": 0.6553907934897788,
+    "tta_over_identity": 5.036807852075711
+  }
+]
