@@ -152,6 +152,17 @@ for w in WEIGHTS:
         mean_boot = np.mean([boot[w][f] for f in FOLDS], axis=0)
         row["mean_delta_ci95"] = ci(mean_boot)
         row["mean_delta_boot_frac_positive"] = float((mean_boot > 0).mean())
+    # Per-target changes vs the baseline, per fold and averaged over folds.
+    if w > 0:
+        row["per_target_delta"] = {
+            t: {
+                **{f"fold{f}": results[f, w]["per_target"][t] - results[f, 0.0]["per_target"][t]
+                   for f in FOLDS},
+                "mean": float(np.mean([results[f, w]["per_target"][t]
+                                       - results[f, 0.0]["per_target"][t] for f in FOLDS])),
+            }
+            for t in results[FOLDS[0], 0.0]["per_target"]
+        }
     summary["comparison"][f"w_new_{w:.2f}"] = row
 summary["limitations"] = [
     "Folds 0 and 1 only; exploratory. Every checkpoint here was trained and epoch-selected on these same folds.",
@@ -165,5 +176,7 @@ np.savez_compressed(
     **{f"{fam}_fold{f}": preds[fam, f] for fam in FAMILIES for f in FOLDS},
     **{f"target_fold{f}": targets[f] for f in FOLDS},
     **{f"ids_fold{f}": frame.iloc[valid_idx[f]][ID].to_numpy(dtype=str) for f in FOLDS},
+    **{f"groups_fold{f}": groups[f] for f in FOLDS},
+    **{f"cache_row_fold{f}": frame.iloc[valid_idx[f]]["row"].to_numpy() for f in FOLDS},
 )
 log(json.dumps(summary["comparison"], indent=2))
