@@ -97,3 +97,142 @@ def test_opposite_shifts_are_mirror_images_of_a_symmetric_input():
     a = translate_images(x, 0.25, 0.0)
     b = translate_images(x, -0.25, 0.0)
     assert torch.allclose(a.flip(-1), b, atol=1e-3)
+
+
+# ---- tta_probs: the exact averaging order the submission must follow --------
+
+import pytest
+
+import src.model.tta as tta_module
+from src.model.tta import tta_probs
+
+_G = 32
+
+
+class _FakeNet:
+    """Position-sensitive stand-in for SlotNet: logits depend on WHERE things
+    are, so a shifted view genuinely changes them, and large enough that
+    sigmoid-before-averaging differs measurably from averaging logits first."""
+
+    def __init__(self):
+        g = torch.Generator().manual_seed(0)
+        self.k = torch.randn(12, _G, _G, generator=g) * 0.02
+        self.calls = 0
+
+    def __call__(self, x, mask):
+        self.calls += 1
+        img = x.float().mean(dim=(1, 2)) / 255.0                # (B, H, W)
+        return (img[:, None] * self.k[None]).sum(dim=(-1, -2)) * 4.0 - 1.0
+
+
+def _batch(seed=0, slices=6):
+    g = torch.Generator().manual_seed(seed)
+    x = torch.randint(0, 255, (2, 3, slices, _G, _G), generator=g, dtype=torch.uint8)
+    # a smooth ramp so 1-pixel shifts change the logits by a real amount
+    x = (x.float() * 0.2 + torch.linspace(0, 200, _G)[None, None, None, None, :]).clamp(0, 255)
+    return x.to(torch.uint8), torch.ones(2, 3)
+
+
+def _old_path(net, xk, m, group=3):
+    """What kaggle_08 did before TTA: average logits over groups, sigmoid."""
+    n = xk.shape[2] // group
+    acc = None
+    for g in range(n):
+        lg = net(xk[:, :, g * group:(g + 1) * group], m).float()
+        acc = lg if acc is None else acc + lg
+    return torch.sigmoid(acc / n)
+
+
+def test_identity_only_weights_reproduce_the_pre_tta_submission_path_exactly():
+    net, (xk, m) = _FakeNet(), _batch()
+    got = tta_probs(net, xk, m, 3, views=TTA_VIEWS, weights=(1.0, 0.0, 0.0, 0.0, 0.0))
+    assert torch.equal(got, _old_path(net, xk, m))
+
+
+def test_identity_output_is_the_pre_tta_path_even_under_full_tta():
+    net, (xk, m) = _FakeNet(), _batch(1)
+    _, ident = tta_probs(net, xk, m, 3, return_identity=True)
+    assert torch.equal(ident, _old_path(net, xk, m))
+
+
+def test_order_is_group_mean_then_view_mean_of_logits_then_sigmoid():
+    net, (xk, m) = _FakeNet(), _batch(2)
+    big = ((0.0, 0.0), (0.3, 0.0), (-0.3, 0.0), (0.0, 0.3), (0.0, -0.3))
+    got = tta_probs(net, xk, m, 3, views=big)
+    per_view = []
+    for tx, ty in big:
+        vlog = []
+        for g in range(2):
+            xg = translate_images(xk[:, :, g * 3:(g + 1) * 3], tx, ty)
+            vlog.append(net(xg, m).float())
+        per_view.append(sum(vlog) / 2)
+    want = torch.sigmoid(sum(w * v for w, v in zip(TTA_WEIGHTS, per_view)))
+    assert torch.allclose(got, want, atol=1e-6)
+    # ...and NOT the other order (probability-average the views), which would
+    # silently give a different, un-evaluated prediction.
+    # Guard the test itself: the toy net must actually be view-sensitive,
+    # otherwise the two orders coincide and this assertion proves nothing.
+    assert max((v - per_view[0]).abs().max() for v in per_view[1:]) > 0.3
+    wrong = sum(w * torch.sigmoid(v) for w, v in zip(TTA_WEIGHTS, per_view))
+    assert (got - wrong).abs().max() > 1e-3
+
+
+def test_view_cache_translates_once_and_gives_identical_results(monkeypatch):
+    net, (xk, m) = _FakeNet(), _batch(3)
+    calls = {"n": 0}
+    real = tta_module.translate_images
+
+    def counting(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(tta_module, "translate_images", counting)
+    cache = {}
+    first = tta_probs(net, xk, m, 3, view_cache=cache)
+    n_first = calls["n"]
+    second = tta_probs(net, xk, m, 3, view_cache=cache)      # a second "member"
+    assert n_first == 2 * len(TTA_VIEWS)                     # 2 groups x 5 views
+    assert calls["n"] == n_first                             # second member: no re-translation
+    assert torch.equal(first, second)
+    assert torch.equal(first, tta_probs(net, xk, m, 3))      # cache never changes the numbers
+
+
+def test_forward_cost_is_one_pass_per_group_per_view():
+    net, (xk, m) = _FakeNet(), _batch(4)
+    tta_probs(net, xk, m, 3)
+    assert net.calls == 2 * len(TTA_VIEWS)
+
+
+def test_rejects_weights_that_do_not_sum_to_one_or_bad_group_size():
+    net, (xk, m) = _FakeNet(), _batch(5)
+    with pytest.raises(ValueError):
+        tta_probs(net, xk, m, 3, weights=(0.3, 0.2, 0.2, 0.2, 0.2))
+    with pytest.raises(ValueError):
+        tta_probs(net, xk, m, 4)                             # 6 slices is not a multiple of 4
+
+
+class _MutatingNet(_FakeNet):
+    """Like SlotNet.forward: `.float().div_(255)` mutates a float32 input in place."""
+
+    def __call__(self, x, mask):
+        self.calls += 1
+        img = x.float().div_(255.0).mean(dim=(1, 2))
+        return (img[:, None] * self.k[None]).sum(dim=(-1, -2)) * 4.0 * 255.0 - 1.0
+
+
+def test_members_sharing_a_view_cache_are_not_corrupted_by_in_place_forwards():
+    (xk, m) = _batch(6)
+    fresh = tta_probs(_MutatingNet(), xk, m, 3)
+    cache = {}
+    first = tta_probs(_MutatingNet(), xk, m, 3, view_cache=cache)
+    later = tta_probs(_MutatingNet(), xk, m, 3, view_cache=cache)   # 2nd..10th member
+    assert torch.equal(first, fresh)
+    assert torch.equal(later, fresh)
+
+
+def test_translation_ignores_the_callers_autocast_context():
+    net, (xk, m) = _FakeNet(), _batch(7)
+    plain = tta_probs(net, xk, m, 3)
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        inside = tta_probs(net, xk, m, 3)
+    assert torch.allclose(plain, inside, atol=1e-6)

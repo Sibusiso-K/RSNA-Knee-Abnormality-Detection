@@ -1,0 +1,142 @@
+{
+  "n_studies": 1400,
+  "scored": 1400,
+  "decode_failures": 0,
+  "no_usable_slot": 0,
+  "members": 10,
+  "member_keys": [
+    [
+      "384",
+      "0"
+    ],
+    [
+      "384",
+      "1"
+    ],
+    [
+      "384",
+      "2"
+    ],
+    [
+      "384",
+      "3"
+    ],
+    [
+      "384",
+      "4"
+    ],
+    [
+      "768",
+      "0"
+    ],
+    [
+      "768",
+      "1"
+    ],
+    [
+      "768",
+      "2"
+    ],
+    [
+      "768",
+      "3"
+    ],
+    [
+      "768",
+      "4"
+    ]
+  ],
+  "wall_seconds_total": 9308.816541194916,
+  "loop_seconds": 9211.584532499313,
+  "decode_seconds": 3599.458377122879,
+  "forward_seconds": 5609.859229564667,
+  "decode_s_per_study": 2.5710416979449136,
+  "forward_s_per_study": 4.007042306831905,
+  "views": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.03,
+      0.0
+    ],
+    [
+      -0.03,
+      0.0
+    ],
+    [
+      0.0,
+      0.03
+    ],
+    [
+      0.0,
+      -0.03
+    ]
+  ],
+  "weights": [
+    0.2,
+    0.2,
+    0.2,
+    0.2,
+    0.2
+  ],
+  "cuda_device": "Tesla T4",
+  "mean_abs_tta_minus_identity_per_member": [
+    0.015112570486962795,
+    0.1368017941713333,
+    0.1771010011434555,
+    0.16545169055461884,
+    0.12791956961154938,
+    0.14402425289154053,
+    0.15100720524787903,
+    0.15038037300109863,
+    0.1295815259218216,
+    0.13260270655155182
+  ],
+  "eval_formula_check": {
+    "max_abs_diff_tta_probs_vs_evaluator_formula": 5.960464477539063e-08
+  },
+  "parity_vs_evaluator": {
+    "small_fold0_tta": {
+      "max_abs_diff": 0.006396859884262085,
+      "mean_abs_diff": 0.0006161360070109367
+    },
+    "small_fold0_identity": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0
+    },
+    "small_fold1_tta": {
+      "max_abs_diff": 0.6102521419525146,
+      "mean_abs_diff": 0.131688192486763
+    },
+    "small_fold1_identity": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0
+    },
+    "base_fold0_tta": {
+      "max_abs_diff": 0.5311188697814941,
+      "mean_abs_diff": 0.12828592956066132
+    },
+    "base_fold0_identity": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0
+    },
+    "base_fold1_tta": {
+      "max_abs_diff": 0.5320349931716919,
+      "mean_abs_diff": 0.14123456180095673
+    },
+    "base_fold1_identity": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0
+    }
+  },
+  "parity_tol": 0.005,
+  "problems": [
+    "implausibly large TTA shift 0.177",
+    "parity small_fold0_tta: max diff 6.397e-03",
+    "parity small_fold1_tta: max diff 6.103e-01",
+    "parity base_fold0_tta: max diff 5.311e-01",
+    "parity base_fold1_tta: max diff 5.320e-01"
+  ]
+}

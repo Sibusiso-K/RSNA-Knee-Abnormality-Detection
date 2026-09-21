@@ -1,0 +1,136 @@
+{
+  "n_studies": 192,
+  "scored": 192,
+  "decode_failures": 0,
+  "no_usable_slot": 0,
+  "members": 10,
+  "member_keys": [
+    [
+      "384",
+      "0"
+    ],
+    [
+      "384",
+      "1"
+    ],
+    [
+      "384",
+      "2"
+    ],
+    [
+      "384",
+      "3"
+    ],
+    [
+      "384",
+      "4"
+    ],
+    [
+      "768",
+      "0"
+    ],
+    [
+      "768",
+      "1"
+    ],
+    [
+      "768",
+      "2"
+    ],
+    [
+      "768",
+      "3"
+    ],
+    [
+      "768",
+      "4"
+    ]
+  ],
+  "wall_seconds_total": 1266.647843837738,
+  "loop_seconds": 1202.4609577655792,
+  "decode_seconds": 288.3815417289734,
+  "forward_seconds": 913.7585864067078,
+  "decode_s_per_study": 1.5019871965050697,
+  "forward_s_per_study": 4.759159304201603,
+  "views": [
+    [
+      0.0,
+      0.0
+    ],
+    [
+      0.03,
+      0.0
+    ],
+    [
+      -0.03,
+      0.0
+    ],
+    [
+      0.0,
+      0.03
+    ],
+    [
+      0.0,
+      -0.03
+    ]
+  ],
+  "weights": [
+    0.2,
+    0.2,
+    0.2,
+    0.2,
+    0.2
+  ],
+  "cuda_device": "Tesla T4",
+  "mean_abs_tta_minus_identity_per_member": [
+    0.016048170626163483,
+    0.014930511824786663,
+    0.0138241583481431,
+    0.015269345603883266,
+    0.012078212574124336,
+    0.013971805572509766,
+    0.014025247655808926,
+    0.013124221004545689,
+    0.011340884491801262,
+    0.012279604561626911
+  ],
+  "eval_formula_check": {
+    "max_abs_diff_tta_probs_vs_evaluator_formula": 5.960464477539063e-08
+  },
+  "parity_vs_evaluator": {
+    "small_fold0_tta": {
+      "max_abs_diff": 5.960464477539063e-08,
+      "mean_abs_diff": 1.157362294890163e-08
+    },
+    "small_fold0_identity": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0
+    },
+    "small_fold1_tta": {
+      "max_abs_diff": 5.960464477539063e-08,
+      "mean_abs_diff": 1.1785434850253296e-08
+    },
+    "small_fold1_identity": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0
+    },
+    "base_fold0_tta": {
+      "max_abs_diff": 5.960464477539063e-08,
+      "mean_abs_diff": 1.2503329038793254e-08
+    },
+    "base_fold0_identity": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0
+    },
+    "base_fold1_tta": {
+      "max_abs_diff": 5.960464477539063e-08,
+      "mean_abs_diff": 1.2793559100998664e-08
+    },
+    "base_fold1_identity": {
+      "max_abs_diff": 0.0,
+      "mean_abs_diff": 0.0
+    }
+  },
+  "parity_tol": 0.005,
+  "problems": []
+}
