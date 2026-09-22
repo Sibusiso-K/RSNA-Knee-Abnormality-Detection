@@ -1,0 +1,148 @@
+{
+  "config": {
+    "folds": [
+      0,
+      1
+    ],
+    "ema_decay": 0.999,
+    "n_boot": 500,
+    "n_scanner_groups": {
+      "0": 29,
+      "1": 30
+    },
+    "views": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.03,
+        0.0
+      ],
+      [
+        -0.03,
+        0.0
+      ],
+      [
+        0.0,
+        0.03
+      ],
+      [
+        0.0,
+        -0.03
+      ]
+    ],
+    "weights": [
+      0.2,
+      0.2,
+      0.2,
+      0.2,
+      0.2
+    ]
+  },
+  "standalone": {
+    "fold0_ordinary": 0.8587074313912714,
+    "fold0_ema": 0.8582020172138338,
+    "fold0_delta": -0.0005054141774375465,
+    "fold0_delta_ci95": [
+      -0.0018743256376017176,
+      0.00015229674879621563
+    ],
+    "fold1_ordinary": 0.8258253942673104,
+    "fold1_ema": 0.8255470554864086,
+    "fold1_delta": -0.00027833878090177677,
+    "fold1_delta_ci95": [
+      -0.0012964406612226058,
+      0.0008225979800943943
+    ],
+    "mean_ordinary": 0.8422664128292909,
+    "mean_ema": 0.8418745363501212,
+    "mean_delta": -0.0003918764791696616,
+    "mean_delta_ci95": [
+      -0.0012710781925683063,
+      0.00030720877722630453
+    ],
+    "mean_delta_boot_frac_positive": 0.134,
+    "folds_nonnegative": 0
+  },
+  "ensemble": {
+    "fold0_ordinary": 0.8676051410094238,
+    "fold0_ema": 0.8671866545180342,
+    "fold0_delta": -0.00041848649138953586,
+    "fold0_delta_ci95": [
+      -0.001347366257425428,
+      -6.0041190928400555e-05
+    ],
+    "fold1_ordinary": 0.838505919002036,
+    "fold1_ema": 0.8383094051353078,
+    "fold1_delta": -0.00019651386672814297,
+    "fold1_delta_ci95": [
+      -0.0008515265203228789,
+      0.0003973794197573205
+    ],
+    "mean_ordinary": 0.8530555300057299,
+    "mean_ema": 0.852748029826671,
+    "mean_delta": -0.0003075001790588394,
+    "mean_delta_ci95": [
+      -0.0008245098786719904,
+      6.949174718252583e-05
+    ],
+    "mean_delta_boot_frac_positive": 0.05,
+    "folds_nonnegative": 0
+  },
+  "runtime": [
+    {
+      "key": "ordinary",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 230.6449680328369,
+      "s_per_study": 0.2651091586584332,
+      "ema_num_updates": 10416
+    },
+    {
+      "key": "ema",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 224.53637313842773,
+      "s_per_study": 0.2580877852165836,
+      "ema_num_updates": 10416
+    },
+    {
+      "key": "base",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 577.5066823959351,
+      "s_per_study": 0.6638007843631437,
+      "ema_num_updates": null
+    },
+    {
+      "key": "ordinary",
+      "fold": 1,
+      "n_studies": 870,
+      "seconds": 231.39026546478271,
+      "s_per_study": 0.26596582237331345,
+      "ema_num_updates": 10416
+    },
+    {
+      "key": "ema",
+      "fold": 1,
+      "n_studies": 870,
+      "seconds": 226.60349464416504,
+      "s_per_study": 0.26046378694731614,
+      "ema_num_updates": 10416
+    },
+    {
+      "key": "base",
+      "fold": 1,
+      "n_studies": 870,
+      "seconds": 581.5406036376953,
+      "s_per_study": 0.6684374754456268,
+      "ema_num_updates": null
+    }
+  ],
+  "limitations": [
+    "Two-fold pilot, per docs/15/docs/20 - not the full five folds.",
+    "One EMA decay (0.999), predeclared, not searched.",
+    "This training run uses per-fold seeding (SEED+fold), a different scheme from the deployed checkpoints' original training - the ordinary leg here is the correct control for the EMA leg, not a byte-identical reproduction of the deployed small member."
+  ]
+}
