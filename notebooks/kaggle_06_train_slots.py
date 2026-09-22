@@ -90,6 +90,7 @@ else:
 
 from src.data.slots import IMG, N_SLOT, SLOTS          # noqa: E402
 from src.labels import TARGETS                          # noqa: E402
+from src.model.ema import EMA                            # noqa: E402
 from src.model.loss import uncertainty_weighted_bce       # noqa: E402
 from src.model.slotnet import SlotNet                    # noqa: E402
 from src.model.validation import check_grouping, grouped_folds  # noqa: E402
@@ -142,6 +143,21 @@ torch.manual_seed(SEED)
 SNAPSHOT_EPOCHS = frozenset(
     int(e) for e in os.environ.get("SNAPSHOT_EPOCHS", "16,20,24").split(",") if e
 )
+
+#: docs/20 job 2: one predeclared EMA decay, unset by default so every other
+#: kernel built from this shared script is byte-for-byte unaffected. Empty
+#: string (the default) disables EMA entirely - no shadow model is built, no
+#: extra memory or per-step cost, no new file is written.
+EMA_DECAY = os.environ.get("EMA_DECAY", "")
+EMA_DECAY = float(EMA_DECAY) if EMA_DECAY else None
+
+#: docs/20 job 2: seed each fold independently (SEED + fold) instead of
+#: letting folds share one running RNG stream in TRAIN_FOLDS order. Off by
+#: default - every earlier kernel keeps its original seed scheme; turning
+#: this on for new training means an isolated single-fold retry gets the
+#: exact same draws that fold got inside a full multi-fold run, instead of
+#: depending on which folds happened to run before it.
+PER_FOLD_SEED = os.environ.get("PER_FOLD_SEED", "0") == "1"
 
 # A cell this close to 0.5 is the labeller saying "the report does not address
 # this", not a weak positive. Excluded from the validation AUC: scoring against
@@ -513,11 +529,37 @@ from transformers import AutoModel  # noqa: E402
 DINOV2_MODEL = AutoModel.from_pretrained(DINOV2)
 
 
+import contextlib  # noqa: E402
+
+
+@contextlib.contextmanager
+def _ema_view(model, ema):
+    """Temporarily load `ema`'s shadow weights into `model` to score it,
+    then restore the model's own weights - even if scoring raises. Used only
+    to compute the EMA validation score for logging/the saved checkpoint's
+    "score" field; never leaves the model holding EMA weights."""
+    original = {k: v.detach().clone() for k, v in model.state_dict().items()}
+    try:
+        model.load_state_dict({k: v.to(next(model.parameters()).device)
+                               for k, v in ema.state_dict().items()})
+        yield model
+    finally:
+        model.load_state_dict(original)
+
+
 def run_fold(fold):
     train_df = frame[frame["fold"] != fold]
     valid_df = frame[frame["fold"] == fold]
     log(f"\n=== fold {fold}: train {len(train_df)} / valid {len(valid_df)} ===")
     dinov2 = DINOV2  # path, kept only for the "encoder" field in the checkpoint
+
+    fold_seed = SEED + fold if PER_FOLD_SEED else SEED
+    if PER_FOLD_SEED:
+        # Before model construction: SlotNet's own head init draws from this
+        # stream too, so reseeding after the model exists would miss it.
+        np.random.seed(fold_seed)
+        torch.manual_seed(fold_seed)
+        log(f"  per-fold seed: {fold_seed} (SEED {SEED} + fold {fold})")
 
     model = SlotNet(DINOV2_MODEL, unfreeze_last=UNFREEZE_LAST, pool=POOL,
                     head=HEAD).to(device)
@@ -529,6 +571,14 @@ def run_fold(fold):
     log(f"encoder hidden size {model.vit.config.hidden_size} "
         f"({len(model.vit.encoder.layer)} blocks, last {UNFREEZE_LAST} open) "
         f"| trainable {trainable / 1e6:.1f}M | pool {POOL}")
+
+    # "Initialize it from the current model at the declared start": right
+    # here, before any optimizer step, so the shadow's starting point is the
+    # SAME randomly-initialised-plus-pretrained-backbone weights training is
+    # about to begin from - not some later, already-partially-trained state.
+    ema = EMA(model, EMA_DECAY) if EMA_DECAY is not None else None
+    if ema is not None:
+        log(f"EMA enabled: decay {EMA_DECAY}")
 
     optimizer = torch.optim.AdamW(
         model.param_groups(LR_HEAD, LR_BACKBONE), weight_decay=WEIGHT_DECAY
@@ -624,6 +674,11 @@ def run_fold(fold):
                     scaler.update()
                 scheduler.step()
                 optimizer.zero_grad(set_to_none=True)
+                # After the real step, not per micro-batch - this loop has
+                # no gradient accumulation, so every step here already is
+                # one real optimizer step.
+                if ema is not None:
+                    ema.update(model)
 
                 # Accumulate on-device. `.item()` forces a host sync, and on XLA
                 # that stalls the pipeline every step for a number only printed
@@ -691,7 +746,7 @@ def run_fold(fold):
                     "head": getattr(model, "head_type", "slot"),
                     "slices_per_slot": int(cache.shape[2]),
                     "slots": [s[0] for s in SLOTS],
-                    "fold": fold, "score": score, "epoch": epoch, "seed": SEED,
+                    "fold": fold, "score": score, "epoch": epoch, "seed": fold_seed,
                     "labels": os.path.basename(label_path),
                     "epochs": EPOCHS, "n_groups": int(len(set(groups))),
                 }
@@ -714,6 +769,35 @@ def run_fold(fold):
                         f"knee_slot_fold{fold}_snap_e{human_epoch}.pth",
                     )
                     log(f"   saved snapshot e{human_epoch} (score {score:.4f})")
+
+            # docs/20 job 2: ordinary and EMA weights, saved at the SAME
+            # predefined final epoch, independent of the best/snapshot logic
+            # above - the pilot compares them paired at one fixed point, not
+            # whichever epoch either happened to be "best" at.
+            if ema is not None and human_epoch == EPOCHS:
+                watchdog.heartbeat()
+                ord_state = model.state_dict()
+                if XLA:
+                    ord_state = {k: v.cpu() for k, v in ord_state.items()}
+                with _ema_view(model, ema) as ema_model:
+                    ema_pred = predict(ema_model, valid_rows, heartbeat=watchdog.heartbeat)
+                ema_score, _ = macro_auc(valid_y, ema_pred)
+                common = dict(
+                    device="xla" if XLA else device.type,
+                    encoder=os.path.basename(dinov2), variant=VARIANT, pool=POOL,
+                    size=TRAIN_SIZE, head=getattr(model, "head_type", "slot"),
+                    slices_per_slot=int(cache.shape[2]), slots=[s[0] for s in SLOTS],
+                    fold=fold, seed=fold_seed, labels=os.path.basename(label_path),
+                    epochs=EPOCHS, n_groups=int(len(set(groups))), final_epoch=human_epoch,
+                    ema_decay=EMA_DECAY, ema_num_updates=ema.num_updates,
+                )
+                torch.save(dict(common, model=ord_state, score=score, epoch=epoch, ema=False),
+                          f"knee_slot_fold{fold}_ordinary_final.pth")
+                torch.save(dict(common, model=ema.state_dict(), score=ema_score, epoch=epoch, ema=True),
+                          f"knee_slot_fold{fold}_ema_final.pth")
+                log(f"   saved ordinary+EMA final (epoch {human_epoch}): "
+                    f"ordinary {score:.4f}  EMA {ema_score:.4f}  "
+                    f"(decay {EMA_DECAY}, {ema.num_updates} updates)")
     return best
 
 
