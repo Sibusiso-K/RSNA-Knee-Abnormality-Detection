@@ -173,8 +173,8 @@ PER_FOLD_SEED = os.environ.get("PER_FOLD_SEED", "0") == "1"
 #: comparison; that divergence is expected and is the thing being measured.
 VERIFY_INIT_ONLY = os.environ.get("VERIFY_INIT_ONLY", "0") == "1"
 #: A short throughput probe: stop each fold after this many optimizer steps,
-#: log steps/sec and a projected full-schedule time, and skip validation and
-#: checkpoint saving for that fold (there is nothing meaningful to save).
+#: time warmup, steady-state, validation and a disposable checkpoint save;
+#: report a full-schedule projection without retaining trained checkpoints.
 #: Unset (default) trains the full schedule as before.
 MAX_STEPS = int(os.environ.get("MAX_STEPS", "0")) or None
 
@@ -193,6 +193,69 @@ UNDECIDED = 0.05
 #: the premise that they carry no information either way - a plausible
 #: bottleneck, not a proven one. See src/model/loss.py.
 UNDECIDED_WEIGHT = float(os.environ.get("UNDECIDED_WEIGHT", "1.0"))
+
+def weight_fingerprint(model) -> str:
+    """Hash full CPU state, including names, shapes, dtypes and raw bits."""
+    import hashlib
+    import json
+
+    h = hashlib.sha256()
+    for name, tensor in sorted(model.state_dict().items()):
+        if tensor.device.type != "cpu":
+            raise ValueError("Initialization fingerprint requires CPU state")
+        value = tensor.detach().contiguous()
+        header = json.dumps([name, list(value.shape), str(value.dtype)],
+                            separators=(",", ":")).encode()
+        raw = value.reshape(-1).view(torch.uint8).numpy().tobytes()
+        for part in (header, raw):
+            h.update(len(part).to_bytes(8, "little"))
+            h.update(part)
+    return h.hexdigest()
+
+
+def construct_fold_model(backbone, fold):
+    """The common CPU construction path for verification and training."""
+    fold_seed = SEED + fold if PER_FOLD_SEED else SEED
+    if PER_FOLD_SEED:
+        np.random.seed(fold_seed)
+        torch.manual_seed(fold_seed)
+        log(f"  per-fold seed: {fold_seed}")
+    model = SlotNet(backbone, unfreeze_last=UNFREEZE_LAST, pool=POOL, head=HEAD)
+    return model, fold_seed
+
+
+def load_cpu_backbone():
+    from transformers import AutoModel
+
+    for base in (INPUT, ".", ".."):
+        if not os.path.isdir(base):
+            continue
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+            if "config.json" in files and "dinov2" in root.lower():
+                log(f"loading CPU encoder: {root}")
+                return root, AutoModel.from_pretrained(root)
+    raise SystemExit("DINOv2 weights not found")
+
+
+if VERIFY_INIT_ONLY:
+    # Exit before backend initialization, cache, labels or fold-data loading.
+    import json
+
+    log("minimal CPU initialization verification")
+    init_path, init_backbone = load_cpu_backbone()
+    records = []
+    for fold in TRAIN_FOLDS:
+        init_model, fold_seed = construct_fold_model(init_backbone, fold)
+        fingerprint = weight_fingerprint(init_model)
+        records.append(dict(fold=fold, seed=fold_seed, sha256=fingerprint))
+        log(f"INIT FINGERPRINT fold {fold} seed {fold_seed}: {fingerprint}")
+        del init_model
+    with open("init_fingerprints.json", "w") as output:
+        json.dump(dict(torch=torch.__version__, encoder=init_path,
+                       head=HEAD, pool=POOL, folds=records), output, indent=2)
+    raise SystemExit(0)
+
 
 # --- device: CUDA, XLA/TPU, or CPU --------------------------------------
 # One script for all three. The model, labels, folds and gold holdout are the
@@ -545,7 +608,7 @@ log(f"encoder: {DINOV2}")
 # this instance's parameters across folds.
 from transformers import AutoModel  # noqa: E402
 
-DINOV2_MODEL = AutoModel.from_pretrained(DINOV2)
+_, DINOV2_MODEL = load_cpu_backbone()
 
 
 import contextlib  # noqa: E402
@@ -566,38 +629,14 @@ def _ema_view(model, ema):
         model.load_state_dict(original)
 
 
-def weight_fingerprint(model) -> str:
-    """A deterministic hex digest of a model's CURRENT weights, order- and
-    device-independent (state_dict is sorted, every tensor moved to CPU
-    float64 before hashing) - a backend difference in float rounding at
-    construction time would show up as a mismatch here, not get hidden by
-    dict ordering or the source device."""
-    import hashlib
-
-    h = hashlib.sha256()
-    for k in sorted(model.state_dict()):
-        v = model.state_dict()[k].detach().to("cpu", torch.float64)
-        h.update(k.encode())
-        h.update(v.numpy().tobytes())
-    return h.hexdigest()
-
-
 def run_fold(fold):
     train_df = frame[frame["fold"] != fold]
     valid_df = frame[frame["fold"] == fold]
     log(f"\n=== fold {fold}: train {len(train_df)} / valid {len(valid_df)} ===")
     dinov2 = DINOV2  # path, kept only for the "encoder" field in the checkpoint
 
-    fold_seed = SEED + fold if PER_FOLD_SEED else SEED
-    if PER_FOLD_SEED:
-        # Before model construction: SlotNet's own head init draws from this
-        # stream too, so reseeding after the model exists would miss it.
-        np.random.seed(fold_seed)
-        torch.manual_seed(fold_seed)
-        log(f"  per-fold seed: {fold_seed} (SEED {SEED} + fold {fold})")
-
-    model = SlotNet(DINOV2_MODEL, unfreeze_last=UNFREEZE_LAST, pool=POOL,
-                    head=HEAD).to(device)
+    model, fold_seed = construct_fold_model(DINOV2_MODEL, fold)
+    model = model.to(device)
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     # Log the hidden size, not just the path. "small" and "base" mount at
     # similar-looking paths, differ by 2x in feature width and ~4x in
@@ -606,11 +645,6 @@ def run_fold(fold):
     log(f"encoder hidden size {model.vit.config.hidden_size} "
         f"({len(model.vit.encoder.layer)} blocks, last {UNFREEZE_LAST} open) "
         f"| trainable {trainable / 1e6:.1f}M | pool {POOL}")
-
-    if VERIFY_INIT_ONLY:
-        fp = weight_fingerprint(model)
-        log(f"  INIT FINGERPRINT fold {fold} seed {fold_seed}: {fp}")
-        return None
 
     # "Initialize it from the current model at the declared start": right
     # here, before any optimizer step, so the shadow's starting point is the
@@ -763,8 +797,12 @@ def run_fold(fold):
                     val_pred = predict(model, valid_rows, heartbeat=watchdog.heartbeat)
                     if device.type == "cuda":
                         torch.cuda.synchronize()
-                    val_s = time.time() - t_val0
                     macro_auc(valid_y, val_pred)  # pay the same scoring cost a real epoch pays
+                    if len(gold_rows):
+                        gold_pred = predict(model, gold_rows, heartbeat=watchdog.heartbeat)
+                        gold_y = gold_truth.loc[gold_frame[ID]].values.astype(np.float32)
+                        macro_auc(gold_y, gold_pred, drop_undecided=False)
+                    val_s = time.time() - t_val0
 
                     t_save0 = time.time()
                     probe_state = model.state_dict()
@@ -776,7 +814,16 @@ def run_fold(fold):
                     del probe_state
 
                     epoch_total_s = train_epoch_s + val_s + save_s
-                    projected_fold_s = epoch_total_s * EPOCHS
+                    warmup_extra_s = max(0.0, sum(warmup) - len(warmup) * steady_s_per_step)
+                    projected_fold_s = epoch_total_s * EPOCHS + warmup_extra_s
+                    import json
+                    with open(f"throughput_fold{fold}.json", "w") as output:
+                        json.dump(dict(fold=fold, max_steps=MAX_STEPS,
+                                       warmup_steps=warmup_n, step_seconds=probe_step_times,
+                                       steady_seconds_per_step=steady_s_per_step,
+                                       validation_seconds=val_s, save_seconds=save_s,
+                                       projected_fold_seconds=projected_fold_s,
+                                       elapsed_probe_seconds=time.time() - T0), output, indent=2)
                     log(f"  THROUGHPUT PROBE fold {fold}: warmup {warmup_n} step(s) "
                         f"{sum(warmup):.2f}s, steady {len(steady)} step(s) avg "
                         f"{steady_s_per_step:.3f} s/step -> {train_epoch_s:.0f}s/epoch training")
@@ -784,8 +831,8 @@ def run_fold(fold):
                         f"+{save_s:.1f}s checkpoint save = {epoch_total_s:.0f}s/epoch all-in")
                     log(f"  THROUGHPUT PROBE fold {fold}: projected {projected_fold_s:.0f}s "
                         f"({projected_fold_s / 3600:.2f}h) for {EPOCHS} epochs, this fold "
-                        f"only, assuming one checkpoint save per epoch (an upper bound - "
-                        f"a real run saves only on a new best or a declared snapshot epoch)")
+                        f"only, plus startup and any additional snapshot writes; "
+                        f"assumes one checkpoint save per epoch")
                     return None
 
             epoch_loss = float(running.item()) / max(steps, 1) if running is not None else float("nan")
