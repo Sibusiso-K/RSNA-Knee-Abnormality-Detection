@@ -1,5 +1,11 @@
 # 00 — Project state (READ THIS FIRST)
 
+> **2026-09-22 update:** Best confirmed public score is **0.893**, submission
+> 56441791 (Fresh10 probability blend with five-view translation TTA).
+> Current CUDA OOF anchor: **0.8599910527**. See
+> [next experiments after 0.893](20-next-experiments-after-0893.md) for the
+> current Claude handover. Earlier state updates below are historical.
+
 > **2026-09-13 update:** Confirmed best public score is **0.891** from Fresh10
 > 24-epoch uniform probability blending (submission 56165500). Read
 > [Claude's next-experiment strategy](15-claude-score-improvement-strategy.md)
