@@ -662,8 +662,8 @@ def run_fold(fold):
     STEP_TIMEOUT_S = float(os.environ.get("STEP_TIMEOUT_S", "120"))
 
     best = 0.0
-    t_probe0 = time.time()
     global_step = 0
+    probe_step_times = []      # MAX_STEPS only: per-step wall time, synced
     with TrainingWatchdog(timeout_s=STEP_TIMEOUT_S, log=log) as watchdog:
         for epoch in range(EPOCHS):
             model.train()
@@ -732,20 +732,60 @@ def run_fold(fold):
                     log(f"  e{epoch} {step}/{steps} loss {float(loss.item()):.4f} "
                         f"({time.time() - t_step:.1f}s/step)")
 
-                global_step += 1
-                if MAX_STEPS and global_step >= MAX_STEPS:
+                if MAX_STEPS:
+                    # Synced so this step's time is the actual device work,
+                    # not queue depth against an unsynced next step - CUDA
+                    # dispatches asynchronously and an un-synced time.time()
+                    # delta mostly measures how far ahead the CPU got.
                     if device.type == "cuda":
                         torch.cuda.synchronize()
-                    elapsed = time.time() - t_probe0
-                    s_per_step = elapsed / global_step
+                    probe_step_times.append(time.time() - t_step)
+
+                global_step += 1
+                if MAX_STEPS and global_step >= MAX_STEPS:
+                    # First few steps pay one-time setup cost that does not
+                    # recur (cuDNN algorithm search/autotune on CUDA, graph
+                    # compilation on XLA) - folding it into every step's
+                    # average would overstate steady-state cost, especially
+                    # at small MAX_STEPS. Report both; project from steady.
+                    warmup_n = min(3, len(probe_step_times) - 1) if len(probe_step_times) > 1 else 0
+                    warmup = probe_step_times[:warmup_n]
+                    steady = probe_step_times[warmup_n:] or probe_step_times
+                    steady_s_per_step = float(np.mean(steady))
                     steps_per_epoch = steps
-                    projected_epoch_s = s_per_step * steps_per_epoch
-                    projected_fold_s = projected_epoch_s * EPOCHS
-                    log(f"  THROUGHPUT PROBE fold {fold}: {global_step} steps in "
-                        f"{elapsed:.1f}s = {s_per_step:.3f} s/step -> "
-                        f"projected {projected_epoch_s:.0f}s/epoch, "
-                        f"{projected_fold_s:.0f}s ({projected_fold_s / 3600:.2f}h) "
-                        f"for {EPOCHS} epochs, this fold only")
+                    train_epoch_s = steady_s_per_step * steps_per_epoch
+
+                    # Project the FULL per-epoch cost, not training alone:
+                    # every real epoch also runs one validation pass and
+                    # (usually) one checkpoint save, timed here for real
+                    # rather than assumed.
+                    t_val0 = time.time()
+                    val_pred = predict(model, valid_rows, heartbeat=watchdog.heartbeat)
+                    if device.type == "cuda":
+                        torch.cuda.synchronize()
+                    val_s = time.time() - t_val0
+                    macro_auc(valid_y, val_pred)  # pay the same scoring cost a real epoch pays
+
+                    t_save0 = time.time()
+                    probe_state = model.state_dict()
+                    if XLA:
+                        probe_state = {k: v.cpu() for k, v in probe_state.items()}
+                    torch.save(probe_state, "throughput_probe_checkpoint.pth")
+                    save_s = time.time() - t_save0
+                    os.remove("throughput_probe_checkpoint.pth")
+                    del probe_state
+
+                    epoch_total_s = train_epoch_s + val_s + save_s
+                    projected_fold_s = epoch_total_s * EPOCHS
+                    log(f"  THROUGHPUT PROBE fold {fold}: warmup {warmup_n} step(s) "
+                        f"{sum(warmup):.2f}s, steady {len(steady)} step(s) avg "
+                        f"{steady_s_per_step:.3f} s/step -> {train_epoch_s:.0f}s/epoch training")
+                    log(f"  THROUGHPUT PROBE fold {fold}: +{val_s:.1f}s validation "
+                        f"+{save_s:.1f}s checkpoint save = {epoch_total_s:.0f}s/epoch all-in")
+                    log(f"  THROUGHPUT PROBE fold {fold}: projected {projected_fold_s:.0f}s "
+                        f"({projected_fold_s / 3600:.2f}h) for {EPOCHS} epochs, this fold "
+                        f"only, assuming one checkpoint save per epoch (an upper bound - "
+                        f"a real run saves only on a new best or a declared snapshot epoch)")
                     return None
 
             epoch_loss = float(running.item()) / max(steps, 1) if running is not None else float("nan")
