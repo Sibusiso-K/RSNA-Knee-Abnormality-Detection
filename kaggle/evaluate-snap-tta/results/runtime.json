@@ -1,0 +1,182 @@
+[
+  {
+    "key": "S",
+    "fold": 0,
+    "n_studies": 870,
+    "seconds": 193.90572810173035,
+    "s_per_study": 0.22288014724336822,
+    "tpu_epoch": 22,
+    "tpu_score": 0.8205603644292246
+  },
+  {
+    "key": "B",
+    "fold": 0,
+    "n_studies": 870,
+    "seconds": 475.1064262390137,
+    "s_per_study": 0.5460993405046134,
+    "tpu_epoch": 20,
+    "tpu_score": 0.8317287242115956
+  },
+  {
+    "key": "E20",
+    "fold": 0,
+    "n_studies": 870,
+    "seconds": 187.64745593070984,
+    "s_per_study": 0.2156867309548389,
+    "tpu_epoch": 19,
+    "tpu_score": 0.8227922867510724
+  },
+  {
+    "key": "E24",
+    "fold": 0,
+    "n_studies": 870,
+    "seconds": 187.718759059906,
+    "s_per_study": 0.2157686885746046,
+    "tpu_epoch": 23,
+    "tpu_score": 0.8230419790120553
+  },
+  {
+    "key": "S",
+    "fold": 1,
+    "n_studies": 870,
+    "seconds": 196.29457449913025,
+    "s_per_study": 0.2256259477001497,
+    "tpu_epoch": 17,
+    "tpu_score": 0.8090139008600575
+  },
+  {
+    "key": "B",
+    "fold": 1,
+    "n_studies": 870,
+    "seconds": 484.93599557876587,
+    "s_per_study": 0.557397696067547,
+    "tpu_epoch": 19,
+    "tpu_score": 0.8135599015909536
+  },
+  {
+    "key": "E20",
+    "fold": 1,
+    "n_studies": 870,
+    "seconds": 191.0593957901001,
+    "s_per_study": 0.21960850090816103,
+    "tpu_epoch": 19,
+    "tpu_score": 0.8028166414437324
+  },
+  {
+    "key": "E24",
+    "fold": 1,
+    "n_studies": 870,
+    "seconds": 191.1809811592102,
+    "s_per_study": 0.21974825420598873,
+    "tpu_epoch": 23,
+    "tpu_score": 0.8025793018904112
+  },
+  {
+    "key": "S",
+    "fold": 2,
+    "n_studies": 870,
+    "seconds": 198.34914445877075,
+    "s_per_study": 0.22798752236640316,
+    "tpu_epoch": 17,
+    "tpu_score": 0.8298430012498916
+  },
+  {
+    "key": "B",
+    "fold": 2,
+    "n_studies": 870,
+    "seconds": 491.1588909626007,
+    "s_per_study": 0.5645504493822997,
+    "tpu_epoch": 22,
+    "tpu_score": 0.8253447375068378
+  },
+  {
+    "key": "E20",
+    "fold": 2,
+    "n_studies": 870,
+    "seconds": 193.26449728012085,
+    "s_per_study": 0.22214310032197798,
+    "tpu_epoch": 19,
+    "tpu_score": 0.8276870690021402
+  },
+  {
+    "key": "E24",
+    "fold": 2,
+    "n_studies": 870,
+    "seconds": 193.33870697021484,
+    "s_per_study": 0.2222283988163389,
+    "tpu_epoch": 23,
+    "tpu_score": 0.8274430566869749
+  },
+  {
+    "key": "S",
+    "fold": 3,
+    "n_studies": 870,
+    "seconds": 196.62131547927856,
+    "s_per_study": 0.22600151204514776,
+    "tpu_epoch": 21,
+    "tpu_score": 0.837271951670417
+  },
+  {
+    "key": "B",
+    "fold": 3,
+    "n_studies": 870,
+    "seconds": 485.7377722263336,
+    "s_per_study": 0.5583192784210731,
+    "tpu_epoch": 16,
+    "tpu_score": 0.8441824945028945
+  },
+  {
+    "key": "E20",
+    "fold": 3,
+    "n_studies": 870,
+    "seconds": 191.33225798606873,
+    "s_per_study": 0.21992213561617094,
+    "tpu_epoch": 19,
+    "tpu_score": 0.8374720512249656
+  },
+  {
+    "key": "E24",
+    "fold": 3,
+    "n_studies": 870,
+    "seconds": 191.38844442367554,
+    "s_per_study": 0.21998671772836267,
+    "tpu_epoch": 23,
+    "tpu_score": 0.8366437857131013
+  },
+  {
+    "key": "S",
+    "fold": 4,
+    "n_studies": 869,
+    "seconds": 196.96634078025818,
+    "s_per_study": 0.2266586200002971,
+    "tpu_epoch": 15,
+    "tpu_score": 0.8340402926066512
+  },
+  {
+    "key": "B",
+    "fold": 4,
+    "n_studies": 869,
+    "seconds": 486.4548909664154,
+    "s_per_study": 0.5597869861523768,
+    "tpu_epoch": 19,
+    "tpu_score": 0.8390123114793301
+  },
+  {
+    "key": "E20",
+    "fold": 4,
+    "n_studies": 869,
+    "seconds": 191.75678086280823,
+    "s_per_study": 0.2206637294163501,
+    "tpu_epoch": 19,
+    "tpu_score": 0.8325923657435443
+  },
+  {
+    "key": "E24",
+    "fold": 4,
+    "n_studies": 869,
+    "seconds": 191.8519425392151,
+    "s_per_study": 0.22077323652383785,
+    "tpu_epoch": 23,
+    "tpu_score": 0.8304368315068742
+  }
+]
