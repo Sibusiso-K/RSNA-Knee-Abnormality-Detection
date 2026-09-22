@@ -159,6 +159,25 @@ EMA_DECAY = float(EMA_DECAY) if EMA_DECAY else None
 #: depending on which folds happened to run before it.
 PER_FOLD_SEED = os.environ.get("PER_FOLD_SEED", "0") == "1"
 
+#: docs/23: CUDA-vs-TPU deployment-backend pilot support, both off by
+#: default and both no-ops for every other kernel.
+#:
+#: VERIFY_INIT_ONLY logs a deterministic fingerprint of the just-constructed,
+#: just-seeded model (before any optimizer step) and exits - construction is
+#: plain CPU-side NumPy/PyTorch code run identically before `.to(device)`, so
+#: matching fingerprints across a TPU kernel and a CUDA kernel with the same
+#: PER_FOLD_SEED confirm the two runs started from bit-identical weights,
+#: before any backend-specific execution (XLA compilation vs CUDA kernels,
+#: differing default matmul precision, etc.) can diverge - the two runs are
+#: therefore a deployment-backend experiment, not a fully isolated hardware
+#: comparison; that divergence is expected and is the thing being measured.
+VERIFY_INIT_ONLY = os.environ.get("VERIFY_INIT_ONLY", "0") == "1"
+#: A short throughput probe: stop each fold after this many optimizer steps,
+#: log steps/sec and a projected full-schedule time, and skip validation and
+#: checkpoint saving for that fold (there is nothing meaningful to save).
+#: Unset (default) trains the full schedule as before.
+MAX_STEPS = int(os.environ.get("MAX_STEPS", "0")) or None
+
 # A cell this close to 0.5 is the labeller saying "the report does not address
 # this", not a weak positive. Excluded from the validation AUC: scoring against
 # a coerced 0 would measure how well the model reproduces silence.
@@ -547,6 +566,22 @@ def _ema_view(model, ema):
         model.load_state_dict(original)
 
 
+def weight_fingerprint(model) -> str:
+    """A deterministic hex digest of a model's CURRENT weights, order- and
+    device-independent (state_dict is sorted, every tensor moved to CPU
+    float64 before hashing) - a backend difference in float rounding at
+    construction time would show up as a mismatch here, not get hidden by
+    dict ordering or the source device."""
+    import hashlib
+
+    h = hashlib.sha256()
+    for k in sorted(model.state_dict()):
+        v = model.state_dict()[k].detach().to("cpu", torch.float64)
+        h.update(k.encode())
+        h.update(v.numpy().tobytes())
+    return h.hexdigest()
+
+
 def run_fold(fold):
     train_df = frame[frame["fold"] != fold]
     valid_df = frame[frame["fold"] == fold]
@@ -571,6 +606,11 @@ def run_fold(fold):
     log(f"encoder hidden size {model.vit.config.hidden_size} "
         f"({len(model.vit.encoder.layer)} blocks, last {UNFREEZE_LAST} open) "
         f"| trainable {trainable / 1e6:.1f}M | pool {POOL}")
+
+    if VERIFY_INIT_ONLY:
+        fp = weight_fingerprint(model)
+        log(f"  INIT FINGERPRINT fold {fold} seed {fold_seed}: {fp}")
+        return None
 
     # "Initialize it from the current model at the declared start": right
     # here, before any optimizer step, so the shadow's starting point is the
@@ -622,6 +662,8 @@ def run_fold(fold):
     STEP_TIMEOUT_S = float(os.environ.get("STEP_TIMEOUT_S", "120"))
 
     best = 0.0
+    t_probe0 = time.time()
+    global_step = 0
     with TrainingWatchdog(timeout_s=STEP_TIMEOUT_S, log=log) as watchdog:
         for epoch in range(EPOCHS):
             model.train()
@@ -689,6 +731,22 @@ def run_fold(fold):
                 if step % 50 == 0:
                     log(f"  e{epoch} {step}/{steps} loss {float(loss.item()):.4f} "
                         f"({time.time() - t_step:.1f}s/step)")
+
+                global_step += 1
+                if MAX_STEPS and global_step >= MAX_STEPS:
+                    if device.type == "cuda":
+                        torch.cuda.synchronize()
+                    elapsed = time.time() - t_probe0
+                    s_per_step = elapsed / global_step
+                    steps_per_epoch = steps
+                    projected_epoch_s = s_per_step * steps_per_epoch
+                    projected_fold_s = projected_epoch_s * EPOCHS
+                    log(f"  THROUGHPUT PROBE fold {fold}: {global_step} steps in "
+                        f"{elapsed:.1f}s = {s_per_step:.3f} s/step -> "
+                        f"projected {projected_epoch_s:.0f}s/epoch, "
+                        f"{projected_fold_s:.0f}s ({projected_fold_s / 3600:.2f}h) "
+                        f"for {EPOCHS} epochs, this fold only")
+                    return None
 
             epoch_loss = float(running.item()) / max(steps, 1) if running is not None else float("nan")
             # heartbeat=watchdog.heartbeat: validation (predict() over the
@@ -802,8 +860,13 @@ def run_fold(fold):
 
 
 scores = [run_fold(f) for f in TRAIN_FOLDS]
-log(f"\nfold scores: {[f'{s:.4f}' for s in scores]}")
-log(f"mean grouped-CV macro AUC: {np.mean(scores):.4f}")
-log("\nFloors — beat these or the model is not reading the images:")
-log("  0.500 constant   0.598 DICOM-metadata-only (site-grouped)   "
-    "0.775 our EfficientNet 2.5D baseline")
+if VERIFY_INIT_ONLY or MAX_STEPS:
+    # Every fold returned None (fingerprint-only or throughput-probe run) -
+    # nothing was trained to score, and np.mean([None, ...]) would raise.
+    log("\nVERIFY_INIT_ONLY/MAX_STEPS run: no fold scores to report.")
+else:
+    log(f"\nfold scores: {[f'{s:.4f}' for s in scores]}")
+    log(f"mean grouped-CV macro AUC: {np.mean(scores):.4f}")
+    log("\nFloors — beat these or the model is not reading the images:")
+    log("  0.500 constant   0.598 DICOM-metadata-only (site-grouped)   "
+        "0.775 our EfficientNet 2.5D baseline")
