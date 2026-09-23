@@ -1,0 +1,18 @@
+{
+  "torch": "2.8.0+cpu",
+  "encoder": "/kaggle/input/models/metaresearch/dinov2/pytorch/small/1",
+  "head": "xattn",
+  "pool": "cls_mean_focal",
+  "folds": [
+    {
+      "fold": 0,
+      "seed": 0,
+      "sha256": "39f4532df521c4f87cbee41466be45633908ec9a7807ca8a8eb7fa8aacd77c29"
+    },
+    {
+      "fold": 1,
+      "seed": 1,
+      "sha256": "a88fb67a88846f88c65ce1e2412c6d31aac749d520510119f769708a5e107a87"
+    }
+  ]
+}

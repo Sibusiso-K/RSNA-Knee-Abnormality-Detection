@@ -13,6 +13,19 @@ Both v2 replacements were successfully pushed with a 900-second execution timeou
 - `sibusisokhumalo11/knee-verify-init-cuda`: v2, explicit NvidiaTeslaT4; latest check COMPLETE.
 - `sibusisokhumalo11/knee-verify-init-tpu`: v2, TPU v5e-8 metadata; latest check QUEUED.
 
+## Update on 2026-09-23
+
+Both v2 checks completed. Their original `init_fingerprints.json` artifacts are preserved under `kaggle/verify-init-cuda/results/` and `kaggle/verify-init-tpu/results/`. The exact SHA256 values match across backends for both folds:
+
+| Fold | Seed | Full CPU state SHA256 |
+| --- | ---: | --- |
+| 0 | 0 | `39f4532df521c4f87cbee41466be45633908ec9a7807ca8a8eb7fa8aacd77c29` |
+| 1 | 1 | `a88fb67a88846f88c65ce1e2412c6d31aac749d520510119f769708a5e107a87` |
+
+The head (`xattn`), pool (`cls_mean_focal`) and DINOv2 encoder path match. Kaggle used PyTorch `2.10.0+cu128` on CUDA and `2.8.0+cpu` in the TPU environment. Despite that runtime difference, the recorded CPU starting states match byte for byte. This verifies the launch gate for this new pilot; it does not reconstruct the unrecorded initialization of historical training runs.
+
+The bounded `knee-probe-small-cuda` **version 1** was pushed once after confirming that no existing kernel was accessible at that slug. Its script was rebuilt and checked for `MAX_STEPS=50`, `VERIFY_INIT_ONLY=0`, `EPOCHS=24`, and fold 0. The launch used explicit `NvidiaTeslaT4` with a 3600-second limit. Await its timing artifact before deciding on full training.
+
 ## What changed
 
 `VERIFY_INIT_ONLY` now exits before backend initialization, cache, labels or fold-data loading. Both verification configs attach only knee-src and DINOv2. Helpers are baked into the training script, so no knee-src republish is needed.
