@@ -26,6 +26,10 @@ The head (`xattn`), pool (`cls_mean_focal`) and DINOv2 encoder path match. Kaggl
 
 The bounded `knee-probe-small-cuda` **version 1** was pushed once after confirming that no existing kernel was accessible at that slug. Its script was rebuilt and checked for `MAX_STEPS=50`, `VERIFY_INIT_ONLY=0`, `EPOCHS=24`, and fold 0. The launch used explicit `NvidiaTeslaT4` with a 3600-second limit. Await its timing artifact before deciding on full training.
 
+The probe completed. Its original timing artifact is preserved at `kaggle/probe-small-cuda/results/throughput_fold0.json`. The 47 steps after the three warmup steps averaged 1.0383 s/step (median 1.0100, standard deviation 0.0891). The first and second halves averaged 1.0113 and 1.0642 s/step respectively; there is a small upward drift and one 1.44 s step, so the mean should not be treated as a guarantee. The first step took 4.32 s. Full fold validation, including the gold holdout and scoring, took 127.7 s; the disposable weights save took 0.13 s. The entire 50-step probe took 226.6 s within the script.
+
+At that measured rate, a 24-epoch fold projects to 13,887 s (3.86 h), including one validation and one save per epoch plus the measured warmup excess. Two folds project to **7.71 h**. This leaves **4.29 h** against a 12-hour session for startup, extra snapshots, variation in step/validation time and platform overhead. The observed in-script startup before the first training step was about 43 s. The paired two-fold run appears feasible in one GPU session, but its actual runtime and weekly quota should be monitored during full training. This experiment alone does not establish an AUC gain or authorize a submission.
+
 ## What changed
 
 `VERIFY_INIT_ONLY` now exits before backend initialization, cache, labels or fold-data loading. Both verification configs attach only knee-src and DINOv2. Helpers are baked into the training script, so no knee-src republish is needed.
