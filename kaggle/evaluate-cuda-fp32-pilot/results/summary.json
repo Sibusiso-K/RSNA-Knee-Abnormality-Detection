@@ -1,0 +1,171 @@
+{
+  "config": {
+    "folds": [
+      0
+    ],
+    "n_boot": 500,
+    "n_scanner_groups": {
+      "0": 29
+    },
+    "views": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.03,
+        0.0
+      ],
+      [
+        -0.03,
+        0.0
+      ],
+      [
+        0.0,
+        0.03
+      ],
+      [
+        0.0,
+        -0.03
+      ]
+    ],
+    "weights": [
+      0.2,
+      0.2,
+      0.2,
+      0.2,
+      0.2
+    ]
+  },
+  "standalone": {
+    "tpu": {
+      "fold0": 0.8587074313912714
+    },
+    "cuda": {
+      "fold0": 0.8387763278821242
+    },
+    "cuda32": {
+      "fold0": 0.836261778297629
+    }
+  },
+  "ensemble": {
+    "tpu": {
+      "fold0": 0.8676051410094238
+    },
+    "cuda": {
+      "fold0": 0.8605339399531914
+    },
+    "cuda32": {
+      "fold0": 0.8589000728426215
+    }
+  },
+  "comparisons": {
+    "cuda32_vs_tpu_standalone": {
+      "fold0": {
+        "a": 0.8587074313912714,
+        "b": 0.836261778297629,
+        "delta": -0.022445653093642326,
+        "delta_ci95": [
+          -0.06538805079754538,
+          -0.006852459822683674
+        ],
+        "boot_frac_positive": 0.0
+      }
+    },
+    "cuda32_vs_tpu_ensemble": {
+      "fold0": {
+        "a": 0.8676051410094238,
+        "b": 0.8589000728426215,
+        "delta": -0.008705068166802277,
+        "delta_ci95": [
+          -0.023822391573228425,
+          -0.002676598830122338
+        ],
+        "boot_frac_positive": 0.0
+      }
+    },
+    "cuda32_vs_cuda16_standalone": {
+      "fold0": {
+        "a": 0.8387763278821242,
+        "b": 0.836261778297629,
+        "delta": -0.0025145495844951515,
+        "delta_ci95": [
+          -0.005076269946320588,
+          0.0026867708866566216
+        ],
+        "boot_frac_positive": 0.118
+      }
+    },
+    "cuda32_vs_cuda16_ensemble": {
+      "fold0": {
+        "a": 0.8605339399531914,
+        "b": 0.8589000728426215,
+        "delta": -0.0016338671105698976,
+        "delta_ci95": [
+          -0.0026418398681172404,
+          0.0004825839032432305
+        ],
+        "boot_frac_positive": 0.064
+      }
+    },
+    "cuda16_vs_tpu_standalone": {
+      "fold0": {
+        "a": 0.8587074313912714,
+        "b": 0.8387763278821242,
+        "delta": -0.019931103509147174,
+        "delta_ci95": [
+          -0.06389260869340255,
+          -0.00433466550761739
+        ],
+        "boot_frac_positive": 0.0
+      }
+    },
+    "cuda16_vs_tpu_ensemble": {
+      "fold0": {
+        "a": 0.8676051410094238,
+        "b": 0.8605339399531914,
+        "delta": -0.007071201056232379,
+        "delta_ci95": [
+          -0.02372506137269638,
+          -0.0008954978579818085
+        ],
+        "boot_frac_positive": 0.0
+      }
+    }
+  },
+  "runtime": [
+    {
+      "key": "tpu",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 213.04242539405823,
+      "s_per_study": 0.24487635102765312
+    },
+    {
+      "key": "cuda",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 206.258549451828,
+      "s_per_study": 0.23707879247336552
+    },
+    {
+      "key": "cuda32",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 206.47458600997925,
+      "s_per_study": 0.237327110356298
+    },
+    {
+      "key": "base",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 531.2904813289642,
+      "s_per_study": 0.6106787141712232
+    }
+  ],
+  "limitations": [
+    "Fold 0 only; one fp32 run. Diagnostic of the docs/24 gap, not a deployment candidate.",
+    "fp32 applies to training only; evaluation uses the unchanged production TTA path (fp16 autocast inference).",
+    "All three small checkpoints share verified-identical initial weights (docs/23) and the same recipe."
+  ]
+}

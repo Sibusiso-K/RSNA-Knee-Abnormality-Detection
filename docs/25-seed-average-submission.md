@@ -50,10 +50,28 @@ per member).
 
 The 0.893 submission (56441791) remains available as the fallback.
 
-## fp32 precision diagnostic (docs/24 follow-up)
+## fp32 precision diagnostic (docs/24 follow-up): negative
 
 `knee-train-small-cuda-fp32-f0` trained fold 0 with `CUDA_AMP=0` (no autocast,
-no GradScaler). On-device validation at epoch 24 was 0.8342, versus 0.8366 for
-the fp16 CUDA run. Epochs took about 756 s each (the 50-step probe implied ~220 s),
-so treat probe projections for fp32 as optimistic. The TTA comparison against
-the fp16 CUDA and TPU controls is running in `kaggle/evaluate-cuda-fp32-pilot`.
+no GradScaler), otherwise identical to the fp16 CUDA pilot and the TPU control
+(same verified initial weights, seeds, labels, cache, schedule). Epochs took
+about 756 s each; the 50-step probe implied ~220 s, so fp32 probe projections
+are optimistic. Evaluated in `kaggle/evaluate-cuda-fp32-pilot` (fold 0, production
+TTA, 500 scanner-group bootstrap; `results/summary.json`, `results/predictions.npz`).
+
+| Fold 0 | standalone | in 0.5·small + 0.5·base |
+|---|---|---|
+| TPU-trained (bf16 autocast) | 0.858707 | 0.867605 |
+| CUDA fp16 autocast | 0.838776 | 0.860534 |
+| CUDA fp32 | 0.836262 | 0.858900 |
+| fp32 − TPU | −0.0224 [−0.0654, −0.0069] | −0.0087 [−0.0238, −0.0027] |
+| fp32 − fp16 | −0.0025 [−0.0051, +0.0027] | −0.0016 [−0.0026, +0.0005] |
+
+fp16-vs-TPU on fold 0 reproduces docs/24 exactly (−0.019931). Removing mixed
+precision does not close the gap; fp32 is, if anything, marginally worse than
+fp16 (not significant). So the docs/24 CUDA deficit is not explained by fp16
+numerics. Remaining untested candidates: XLA-vs-CUDA kernel behaviour over the
+whole run (including augmentation's `grid_sample`), the bf16 noise itself acting
+as a regulariser, and the PyTorch version difference (2.8 TPU image vs 2.10 CUDA
+image). None is worth more GPU hours now: TPU-trained members are what the
+deployed ensemble uses, and they are better. **Keep training on TPU.**
