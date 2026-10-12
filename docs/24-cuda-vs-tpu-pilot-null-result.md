@@ -60,3 +60,7 @@ interval excluding zero on the negative side.
 - Training: `kaggle/train-small-cuda-pilot/`; initialization check: `kaggle/verify-init-cuda/`,
   `kaggle/verify-init-tpu/`; throughput probe: `kaggle/probe-small-cuda/`.
 - The 0.893 TTA submission (56441791) remains the anchor and only live candidate.
+
+## Precision diagnostic (docs/25, in progress)
+
+Question: does fp16 autocast explain the CUDA gap? Test: the same fold-0 pilot run with CUDA autocast and GradScaler disabled (`CUDA_AMP=0`, fp32 throughout). Configs: `kaggle/probe-small-cuda-fp32` (50-step probe, `throughput_fold0.json` projected 18,525 s, 5.1 h for fold 0; steady 1.367 s/step vs 1.038 for fp16) and `kaggle/train-small-cuda-fp32-f0` (full 24-epoch run, pushed as `knee-train-small-cuda-fp32-f0` v1). Evaluation will use the same CUDA five-view TTA pipeline (fp16 inference, unchanged) on fold 0 against the fp16 CUDA and TPU controls.
