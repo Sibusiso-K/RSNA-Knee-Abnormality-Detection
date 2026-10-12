@@ -1,0 +1,142 @@
+{
+  "config": {
+    "folds": [
+      0,
+      1
+    ],
+    "n_boot": 500,
+    "n_scanner_groups": {
+      "0": 29,
+      "1": 30
+    },
+    "views": [
+      [
+        0.0,
+        0.0
+      ],
+      [
+        0.03,
+        0.0
+      ],
+      [
+        -0.03,
+        0.0
+      ],
+      [
+        0.0,
+        0.03
+      ],
+      [
+        0.0,
+        -0.03
+      ]
+    ],
+    "weights": [
+      0.2,
+      0.2,
+      0.2,
+      0.2,
+      0.2
+    ]
+  },
+  "standalone": {
+    "fold0_tpu": 0.8587074313912714,
+    "fold0_cuda": 0.8387763278821242,
+    "fold0_delta": -0.019931103509147174,
+    "fold0_delta_ci95": [
+      -0.061954982605337175,
+      -0.003835026302334625
+    ],
+    "fold1_tpu": 0.8258253942673104,
+    "fold1_cuda": 0.8066761424113581,
+    "fold1_delta": -0.019149251855952287,
+    "fold1_delta_ci95": [
+      -0.05234588632260366,
+      -0.0031474860267773036
+    ],
+    "mean_tpu": 0.8422664128292909,
+    "mean_cuda": 0.8227262351467411,
+    "mean_delta": -0.01954017768254973,
+    "mean_delta_ci95": [
+      -0.04866824468064706,
+      -0.00868331833291827
+    ],
+    "mean_delta_boot_frac_positive": 0.0,
+    "folds_nonnegative": 0
+  },
+  "ensemble": {
+    "fold0_tpu": 0.8676051410094238,
+    "fold0_cuda": 0.8605339399531914,
+    "fold0_delta": -0.007071201056232379,
+    "fold0_delta_ci95": [
+      -0.022350118814977823,
+      -0.0007816034597045501
+    ],
+    "fold1_tpu": 0.838505919002036,
+    "fold1_cuda": 0.8324232994828248,
+    "fold1_delta": -0.006082619519211185,
+    "fold1_delta_ci95": [
+      -0.018063302703775836,
+      0.00015638452131654072
+    ],
+    "mean_tpu": 0.8530555300057299,
+    "mean_cuda": 0.8464786197180081,
+    "mean_delta": -0.006576910287721782,
+    "mean_delta_ci95": [
+      -0.01717812584810128,
+      -0.0025379487156958224
+    ],
+    "mean_delta_boot_frac_positive": 0.0,
+    "folds_nonnegative": 0
+  },
+  "runtime": [
+    {
+      "key": "tpu",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 217.7411859035492,
+      "s_per_study": 0.2502772251764933
+    },
+    {
+      "key": "cuda",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 209.24308395385742,
+      "s_per_study": 0.24050929190098555
+    },
+    {
+      "key": "base",
+      "fold": 0,
+      "n_studies": 870,
+      "seconds": 539.4167106151581,
+      "s_per_study": 0.6200192076036299
+    },
+    {
+      "key": "tpu",
+      "fold": 1,
+      "n_studies": 870,
+      "seconds": 220.08241152763367,
+      "s_per_study": 0.25296828911222263
+    },
+    {
+      "key": "cuda",
+      "fold": 1,
+      "n_studies": 870,
+      "seconds": 210.68608498573303,
+      "s_per_study": 0.24216791377670463
+    },
+    {
+      "key": "base",
+      "fold": 1,
+      "n_studies": 870,
+      "seconds": 543.7454309463501,
+      "s_per_study": 0.6249947482141955
+    }
+  ],
+  "limitations": [
+    "Two-fold pilot (docs/15/docs/20/docs/23 scope) - not the full five folds.",
+    "Initial weights verified bit-identical across backends for this pilot only (docs/23); the historical deployed/TPU checkpoints' own initial state was never recorded and remains unverified.",
+    "CUDA and TPU/XLA differ in default matmul precision and kernel implementations beyond the verified-identical starting point, so this is a deployment-backend experiment, not a fully isolated hardware comparison.",
+    "Bootstrap resamples scanner-fingerprint groups within each fold, paired against the TPU control; fold 0 has few groups."
+  ]
+}
