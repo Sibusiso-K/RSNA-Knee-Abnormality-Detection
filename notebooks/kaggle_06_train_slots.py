@@ -159,6 +159,12 @@ EMA_DECAY = float(EMA_DECAY) if EMA_DECAY else None
 #: depending on which folds happened to run before it.
 PER_FOLD_SEED = os.environ.get("PER_FOLD_SEED", "0") == "1"
 
+#: docs/25: precision diagnostic. "1" (default, every existing kernel) keeps
+#: CUDA fp16 autocast + GradScaler. "0" runs the CUDA path in fp32 (no
+#: autocast, no GradScaler) to test whether fp16 precision explains the
+#: CUDA-vs-TPU gap in docs/24. Ignored on XLA.
+CUDA_AMP = os.environ.get("CUDA_AMP", "1") == "1"
+
 #: docs/23: CUDA-vs-TPU deployment-backend pilot support, both off by
 #: default and both no-ops for every other kernel.
 #:
@@ -535,7 +541,7 @@ def autocast():
     """
     if XLA:
         return torch.autocast("xla", dtype=torch.bfloat16)
-    return torch.autocast("cuda", enabled=device.type == "cuda")
+    return torch.autocast("cuda", enabled=device.type == "cuda" and CUDA_AMP)
 
 
 @torch.no_grad()
@@ -664,7 +670,7 @@ def run_fold(fold):
         optimizer, max_lr=[LR_BACKBONE, LR_HEAD],
         total_steps=EPOCHS * steps + EPOCHS,
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=(not XLA) and device.type == "cuda")
+    scaler = torch.amp.GradScaler("cuda", enabled=(not XLA) and device.type == "cuda" and CUDA_AMP)
 
     train_rows = train_df["row"].values
     train_y = train_df[TARGETS].values.astype(np.float32)
