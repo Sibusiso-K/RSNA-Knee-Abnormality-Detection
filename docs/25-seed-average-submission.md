@@ -46,7 +46,7 @@ per member).
 - Public pass v1 (`results/public_run_stats_v1.json`): 15 members, 3/3 scored,
   IDs and columns exact, values finite in [0, 1], no problems.
 - **Submitted:** `knee-submit-fresh15-seedavg-tta` v1 → submission 57116420.
-  Score: pending.
+  Score: **0.894** public (COMPLETE, checked 2026-10-14). Previous anchor 0.893.
 
 The 0.893 submission (56441791) remains available as the fallback.
 
